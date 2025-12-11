@@ -1,0 +1,5 @@
+{
+  "name": "RCM Generator Pro",
+  "description": "An AI-powered Reliability Centered Maintenance (RCM) generator. Upload operational context documents or enter details manually to generate structured maintenance strategies, failure modes, and risk assessments.",
+  "requestFramePermissions": []
+}
