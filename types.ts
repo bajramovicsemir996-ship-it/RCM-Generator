@@ -1,14 +1,31 @@
 
+export interface InspectionStep {
+  step: number;
+  description: string;
+  criteria: string;
+  technique: string;
+}
+
 export interface InspectionSheet {
-  checkPointDescription: string;
-  type: 'Qualitative' | 'Quantitative';
+  responsibility: string;
   estimatedTime: string;
-  criteriaLimits: string; // Replaces normalCondition
-  responsibility: string; // New field for "Who should do it"
+  safetyPrecautions: string; // New: Safety warnings/PPE
+  toolsRequired: string;     // New: Tools list
+  steps: InspectionStep[];   // New: List of steps
   
-  // Legacy field for backward compatibility with previously saved studies
+  // Legacy fields for backward compatibility
+  checkPointDescription?: string;
+  type?: 'Qualitative' | 'Quantitative';
+  criteriaLimits?: string; 
   normalCondition?: string; 
 }
+
+export type ConsequenceCategory = 
+  | 'Hidden - Safety/Env' 
+  | 'Hidden - Operational' 
+  | 'Evident - Safety/Env' 
+  | 'Evident - Operational'
+  | 'Evident - Non-Operational';
 
 export interface RCMItem {
   id: string;
@@ -19,6 +36,12 @@ export interface RCMItem {
   failureEffect: string;
   criticality: 'High' | 'Medium' | 'Low';
   
+  // Consequence Analysis (SAE JA1011)
+  consequenceCategory: ConsequenceCategory;
+  
+  // CMMS Taxonomy (ISO 14224)
+  iso14224Code: string; // e.g., "Wear", "Fatigue", "Corrosion"
+
   // FMECA Fields
   severity: number;    // 1-10
   occurrence: number;  // 1-10

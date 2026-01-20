@@ -28,6 +28,21 @@ const rcmSchema: Schema = {
         type: Type.STRING,
         description: "The immediate effect of the failure on the system or safety."
       },
+      consequenceCategory: {
+        type: Type.STRING,
+        enum: [
+          'Hidden - Safety/Env', 
+          'Hidden - Operational', 
+          'Evident - Safety/Env', 
+          'Evident - Operational',
+          'Evident - Non-Operational'
+        ],
+        description: "SAE JA1011 Consequence classification."
+      },
+      iso14224Code: {
+        type: Type.STRING,
+        description: "Standard failure mechanism code from ISO 14224 (e.g., 'Wear', 'Corrosion', 'Fatigue', 'Overheating', 'Leakage', 'Breakage')."
+      },
       criticality: { 
         type: Type.STRING, 
         enum: ["High", "Medium", "Low"],
@@ -69,20 +84,32 @@ const rcmSchema: Schema = {
         description: "The specific category of the maintenance strategy."
       }
     },
-    required: ["component", "function", "functionalFailure", "failureMode", "failureEffect", "criticality", "severity", "occurrence", "detection", "maintenanceTask", "interval", "taskType"]
+    required: ["component", "function", "functionalFailure", "failureMode", "failureEffect", "consequenceCategory", "iso14224Code", "criticality", "severity", "occurrence", "detection", "maintenanceTask", "interval", "taskType"]
   }
 };
 
 const inspectionSchema: Schema = {
   type: Type.OBJECT,
   properties: {
-    checkPointDescription: { type: Type.STRING, description: "Detailed instruction on what to check." },
-    type: { type: Type.STRING, enum: ['Qualitative', 'Quantitative'], description: "Is the check based on measurement (Quantitative) or observation (Qualitative)?" },
-    estimatedTime: { type: Type.STRING, description: "Estimated duration to complete the task (e.g. '15 mins')." },
-    criteriaLimits: { type: Type.STRING, description: "Specific Pass/Fail criteria or numerical limits (e.g. '> 50 psi', 'No visible cracks')." },
-    responsibility: { type: Type.STRING, description: "Role responsible for execution (e.g. 'Operator', 'Mech. Tech', 'Electrician')." }
+    responsibility: { type: Type.STRING, description: "Role responsible (e.g. Operator, Mech. Tech)" },
+    estimatedTime: { type: Type.STRING, description: "Total duration e.g. '30 mins'" },
+    safetyPrecautions: { type: Type.STRING, description: "Required PPE only (e.g. Gloves, Goggles). Exclude LOTO/Administrative warnings." },
+    toolsRequired: { type: Type.STRING, description: "List of tools, gauges, or consumables needed." },
+    steps: {
+      type: Type.ARRAY,
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          step: { type: Type.INTEGER },
+          description: { type: Type.STRING, description: "Direct technical instruction. Start with action verb." },
+          criteria: { type: Type.STRING, description: "Technical pass/fail limit or condition." },
+          technique: { type: Type.STRING, description: "Method (e.g. Visual, Ultrasonic, Multimeter)" }
+        },
+        required: ["step", "description", "criteria", "technique"]
+      }
+    }
   },
-  required: ['checkPointDescription', 'type', 'estimatedTime', 'criteriaLimits', 'responsibility']
+  required: ["responsibility", "estimatedTime", "safetyPrecautions", "toolsRequired", "steps"]
 };
 
 export const generateRCMAnalysis = async (
@@ -124,17 +151,13 @@ export const generateRCMAnalysis = async (
       
       CRITICAL INSTRUCTIONS:
       1. **Failure Mode Formatting**: You MUST format all failure modes strictly using the structure "[Failure Mechanism] due to [Specific Cause]". 
-         - Correct Example: "Surface wear due to abrasion from bullets and scale"
-         - Correct Example: "Motor burnout due to winding insulation degradation"
-         - Incorrect Example: "Wear and tear"
-      
-      2. **Maximum Detail**: Provide the most detailed, exhaustive, and technical analysis possible. Do not summarize. Break down every component into its specific failure modes. 
-      
-      3. **Separation**: 
+      2. **Consequence Analysis (SAE JA1011)**: Evaluate if the failure is 'Hidden' (not apparent to the operator) or 'Evident'. Then determine if it has Safety/Env, Operational, or Non-Operational consequences.
+      3. **ISO 14224 Classification**: Assign a standard Failure Mechanism classification for CMMS cleaning (e.g., Wear, Corrosion, Fatigue, Breakage, Deformation, Overheating, External Leakage).
+      4. **Task Targeting**: If a failure is 'Hidden', strongly consider 'Failure Finding' tasks. If 'Evident', use Condition Monitoring or Time-Based Restoration/Replacement.
+      5. **Maximum Detail**: Provide the most detailed, exhaustive, and technical analysis possible. Do not summarize. Break down every component into its specific failure modes. 
+      6. **Separation**: 
          - Never combine multiple failure modes in one row. 
-         - Never combine multiple distinct maintenance tasks in one row.
          - If a component has 3 failure modes, generate 3 separate items.
-         - If a failure mode requires an inspection AND a replacement, generate 2 separate items.
       
       For each item, estimate the FMECA scores (Severity, Occurrence, Detection) on a scale of 1-10 based on standard industry practices for similar equipment.`
     });
@@ -145,7 +168,7 @@ export const generateRCMAnalysis = async (
       config: {
         responseMimeType: "application/json",
         responseSchema: rcmSchema,
-        systemInstruction: "You are a World-Class Senior Reliability Engineer. Provide the most detailed, expert-level analysis possible. Strict JSON output. Adhere rigidly to the 'Mechanism due to Cause' format for failure modes. Do not include markdown formatting."
+        systemInstruction: "You are a World-Class Senior Reliability Engineer. Provide the most detailed, expert-level analysis possible. Strict JSON output. Adhere rigidly to SAE JA1011 RCM principles and ISO 14224 taxonomy. Do not include markdown formatting."
       }
     });
 
@@ -157,7 +180,6 @@ export const generateRCMAnalysis = async (
     // Parse JSON and add ROBUST Unique IDs
     const rawData = JSON.parse(text) as Omit<RCMItem, 'id' | 'rpn'>[];
     
-    // Using index + random ensures uniqueness even if processed in the same millisecond
     return rawData.map((item, index) => ({ 
       ...item, 
       severity: item.severity || 5,
@@ -179,27 +201,29 @@ export const generateInspectionSheet = async (item: RCMItem): Promise<Inspection
     if (!apiKey) throw new Error("API_KEY not set");
     const ai = new GoogleGenAI({ apiKey });
 
-    const prompt = `Create a maintenance inspection sheet entry for this specific task:
+    const prompt = `Create a technical inspection procedure for the task: ${item.maintenanceTask}.
     
+    Equipment Context:
     Component: ${item.component}
     Failure Mode: ${item.failureMode}
-    Proposed Task: ${item.maintenanceTask}
+    Consequence Category: ${item.consequenceCategory}
+    ISO 14224 Taxonomy: ${item.iso14224Code}
     
-    Provide:
-    1. A detailed Check Point Description (what exactly to look for/measure).
-    2. Task Type (Qualitative or Quantitative).
-    3. Estimated Time (e.g. "10 mins").
-    4. Criteria / Limits: Specific values, limits, or pass/fail criteria (e.g. "> 40°C", "No leaks", "Vibration < 4mm/s").
-    5. Responsibility: Who should perform this? (e.g. Operator, Mechanical Technician, Instrument Tech).
-    
-    Do NOT provide remarks. The remarks section will be left blank for the operator.`;
+    STRICT CONTENT RULES:
+    1. EXCLUDE all Lockout/Tagout (LOTO) steps or mentions.
+    2. EXCLUDE all administrative preparation steps.
+    3. EXCLUDE general area preparation.
+    4. START IMMEDIATELY with technical steps.
+    5. Provide exactly 3 to 4 sequential steps.
+    6. For 'Safety Precautions', list ONLY physical PPE.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-2.5-flash",
       contents: { parts: [{ text: prompt }] },
       config: {
         responseMimeType: "application/json",
-        responseSchema: inspectionSchema
+        responseSchema: inspectionSchema,
+        systemInstruction: "You are a Senior Technical Lead. Create work instructions that are 100% technical. Focus strictly on the core mechanical/electrical/inspection steps."
       }
     });
 
