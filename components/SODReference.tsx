@@ -1,9 +1,12 @@
+
 import React, { useState } from 'react';
-import { X, AlertTriangle, Activity, Eye, BookOpen } from 'lucide-react';
+import { X, AlertTriangle, Activity, Eye, BookOpen, Undo2 } from 'lucide-react';
 
 interface SODReferenceProps {
   isOpen: boolean;
   onClose: () => void;
+  onUndo: () => void;
+  canUndo: boolean;
 }
 
 const SEVERITY_DATA = [
@@ -45,7 +48,7 @@ const DETECTION_DATA = [
   { score: 1, label: "Almost Certain", desc: "Defect will be detected." },
 ];
 
-export const SODReference: React.FC<SODReferenceProps> = ({ isOpen, onClose }) => {
+export const SODReference: React.FC<SODReferenceProps> = ({ isOpen, onClose, onUndo, canUndo }) => {
   const [activeTab, setActiveTab] = useState<'S' | 'O' | 'D'>('S');
 
   if (!isOpen) return null;
@@ -89,9 +92,21 @@ export const SODReference: React.FC<SODReferenceProps> = ({ isOpen, onClose }) =
               <p className="text-xs text-slate-400">Standard 1-10 Industry Scale</p>
             </div>
           </div>
-          <button onClick={onClose} className="hover:bg-slate-700/50 p-2 rounded-full transition-colors">
-            <X size={20} />
-          </button>
+          <div className="flex items-center gap-3">
+            <button
+              onClick={onUndo}
+              disabled={!canUndo}
+              className={`p-2 rounded-full transition-all ${
+                canUndo ? 'hover:bg-white/10 text-white' : 'text-slate-600 opacity-20'
+              }`}
+              title="Undo last action"
+            >
+              <Undo2 size={20} />
+            </button>
+            <button onClick={onClose} className="hover:bg-slate-700/50 p-2 rounded-full transition-colors">
+              <X size={20} />
+            </button>
+          </div>
         </div>
 
         <div className="flex border-b border-slate-200 bg-slate-50">

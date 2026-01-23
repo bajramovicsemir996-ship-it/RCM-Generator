@@ -9,15 +9,20 @@ export interface InspectionStep {
 export interface InspectionSheet {
   responsibility: string;
   estimatedTime: string;
-  safetyPrecautions: string; // New: Safety warnings/PPE
-  toolsRequired: string;     // New: Tools list
-  steps: InspectionStep[];   // New: List of steps
+  safetyPrecautions: string;
+  toolsRequired: string;
+  steps: InspectionStep[];
   
-  // Legacy fields for backward compatibility
   checkPointDescription?: string;
   type?: 'Qualitative' | 'Quantitative';
   criteriaLimits?: string; 
   normalCondition?: string; 
+}
+
+export interface ComponentIntel {
+  description: string;
+  location: string;
+  visualCues: string;
 }
 
 export type ConsequenceCategory = 
@@ -36,22 +41,19 @@ export interface RCMItem {
   failureEffect: string;
   criticality: 'High' | 'Medium' | 'Low';
   
-  // Consequence Analysis (SAE JA1011)
   consequenceCategory: ConsequenceCategory;
-  
-  // CMMS Taxonomy (ISO 14224)
-  iso14224Code: string; // e.g., "Wear", "Fatigue", "Corrosion"
+  iso14224Code: string;
 
-  // FMECA Fields
-  severity: number;    // 1-10
-  occurrence: number;  // 1-10
-  detection: number;   // 1-10
-  rpn: number;         // Calculated (S * O * D)
+  severity: number;
+  occurrence: number;
+  detection: number;
+  rpn: number;
 
   maintenanceTask: string;
   interval: string;
   taskType: 'Condition Monitoring' | 'Time-Based' | 'Run-to-Failure' | 'Redesign' | 'Failure Finding' | 'Lubrication' | 'Servicing' | 'Restoration' | 'Replacement';
   inspectionSheet?: InspectionSheet;
+  componentIntel?: ComponentIntel;
 }
 
 export interface AnalysisStats {
@@ -66,7 +68,7 @@ export type InputMode = 'manual' | 'upload';
 export interface FileData {
   name: string;
   mimeType: string;
-  data: string; // base64
+  data: string;
 }
 
 export interface SavedStudy {

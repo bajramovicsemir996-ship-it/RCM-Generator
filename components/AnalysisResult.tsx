@@ -1,6 +1,6 @@
 
 import React, { useState, useMemo } from 'react';
-import { RCMItem, InspectionSheet, InspectionStep, ConsequenceCategory } from '../types';
+import { RCMItem, InspectionSheet, InspectionStep, ConsequenceCategory, ComponentIntel } from '../types';
 import { generateInspectionSheet } from '../services/geminiService';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, Cell 
@@ -9,12 +9,14 @@ import {
   AlertTriangle, CheckCircle, Clock, Activity, FileText, 
   Pencil, Trash2, Save, X, ClipboardList, Loader2,
   FileCheck, File, Printer, Copy, AlertOctagon, FilterX, User, ShieldAlert, Wrench, Search, ChevronRight, Sparkles, RefreshCw,
-  ArrowUpDown, ArrowUp, ArrowDown, Filter, Plus, Tag, ShieldCheck, Zap, ListChecks
+  ArrowUpDown, ArrowUp, ArrowDown, Filter, Plus, Tag, ShieldCheck, Zap, ListChecks, Info, MapPin, Eye, Undo2, LayoutList
 } from 'lucide-react';
 
 interface AnalysisResultProps {
   data: RCMItem[];
   onUpdate: (newData: RCMItem[]) => void;
+  onUndo: () => void;
+  canUndo: boolean;
 }
 
 const CONSEQUENCE_LABELS: ConsequenceCategory[] = [
@@ -26,27 +28,13 @@ const CONSEQUENCE_LABELS: ConsequenceCategory[] = [
 ];
 
 const COLORS = {
-  High: '#ef4444',   // red-500
-  Medium: '#f59e0b', // amber-500
-  Low: '#10b981'     // emerald-500
+  High: '#ef4444',
+  Medium: '#f59e0b',
+  Low: '#10b981'
 };
 
-const TASK_COLORS: Record<string, string> = {
-  'Condition Monitoring': '#3b82f6', // Blue
-  'Time-Based': '#8b5cf6', // Violet
-  'Run-to-Failure': '#64748b', // Slate
-  'Redesign': '#ec4899', // Pink
-  'Failure Finding': '#f59e0b', // Amber
-  'Lubrication': '#10b981', // Emerald
-  'Servicing': '#06b6d4', // Cyan
-  'Restoration': '#f97316', // Orange
-  'Replacement': '#ef4444' // Red
-};
-
-// Helper to get image based on task keywords
 const getTaskImage = (task: string): string => {
-  const t = task.toLowerCase();
-  
+  const t = (task || '').toLowerCase();
   if (t.includes('thermal') || t.includes('infrared') || t.includes('thermography') || t.includes('heat') || t.includes('temperature')) 
     return 'https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?auto=format&fit=crop&w=800&q=80';
   if (t.includes('vibration') || t.includes('accelerometer') || t.includes('oscillation') || t.includes('align')) 
@@ -63,13 +51,12 @@ const getTaskImage = (task: string): string => {
     return 'https://images.unsplash.com/photo-1581578731117-104f8a74695b?auto=format&fit=crop&w=800&q=80';
   if (t.includes('replace') || t.includes('remove') || t.includes('install') || t.includes('bearing') || t.includes('seal') || t.includes('valve') || t.includes('pump')) 
     return 'https://images.unsplash.com/photo-1530124566582-a618bc2615dc?auto=format&fit=crop&w=800&q=80';
-  
   return 'https://images.unsplash.com/photo-1565514020176-db5b550dd707?auto=format&fit=crop&w=800&q=80';
 };
 
 const getRPNColorStyle = (rpn: number) => {
-  if (rpn >= 200) return { bg: 'bg-red-100', text: 'text-red-900', bar: 'bg-red-500' };
-  if (rpn >= 100) return { bg: 'bg-orange-100', text: 'text-orange-900', bar: 'bg-orange-500' };
+  if (rpn >= 120) return { bg: 'bg-red-100', text: 'text-red-900', bar: 'bg-red-500' };
+  if (rpn >= 75) return { bg: 'bg-orange-100', text: 'text-orange-900', bar: 'bg-orange-500' };
   if (rpn >= 40) return { bg: 'bg-yellow-50', text: 'text-yellow-800', bar: 'bg-yellow-400' };
   return { bg: 'bg-emerald-50', text: 'text-emerald-800', bar: 'bg-emerald-400' };
 };
@@ -80,12 +67,13 @@ const getScoreColor = (score: number) => {
   return 'text-slate-500';
 };
 
-export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }) => {
+export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, onUndo, canUndo }) => {
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editForm, setEditForm] = useState<RCMItem | null>(null);
   const [matrixFilter, setMatrixFilter] = useState<{s: number, o: number} | null>(null);
+  const [barFilter, setBarFilter] = useState<string | null>(null);
+  const [selectedIntel, setSelectedIntel] = useState<RCMItem | null>(null);
   
-  // Table sorting and filtering states
   const [sortConfig, setSortConfig] = useState<{ key: keyof RCMItem | 'rpn'; direction: 'asc' | 'desc' }>({ key: 'rpn', direction: 'desc' });
   const [searchFilters, setSearchFilters] = useState({
     component: '',
@@ -95,7 +83,6 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
     iso14224Code: ''
   });
   
-  // Inspection Sheet States
   const [generatingSheets, setGeneratingSheets] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [viewSheet, setViewSheet] = useState<{item: RCMItem} | null>(null);
@@ -103,10 +90,10 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
   
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
+  const [classicalCopied, setClassicalCopied] = useState(false);
 
-  // --- DERIVED DATA (SORTING & FILTERING) ---
   const processedData = useMemo(() => {
-    let result = [...data];
+    let result = (data || []).filter(item => item !== null && item !== undefined);
 
     if (matrixFilter) {
       result = result.filter(item => 
@@ -115,20 +102,24 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
       );
     }
 
+    if (barFilter) {
+      result = result.filter(item => item.id === barFilter);
+    }
+
     if (searchFilters.component) {
-      result = result.filter(item => item.component.toLowerCase().includes(searchFilters.component.toLowerCase()));
+      result = result.filter(item => (item.component || '').toLowerCase().includes(searchFilters.component.toLowerCase()));
     }
     if (searchFilters.function) {
-      result = result.filter(item => item.function.toLowerCase().includes(searchFilters.function.toLowerCase()));
+      result = result.filter(item => (item.function || '').toLowerCase().includes(searchFilters.function.toLowerCase()));
     }
     if (searchFilters.failureMode) {
-      result = result.filter(item => item.failureMode.toLowerCase().includes(searchFilters.failureMode.toLowerCase()));
+      result = result.filter(item => (item.failureMode || '').toLowerCase().includes(searchFilters.failureMode.toLowerCase()));
     }
     if (searchFilters.consequenceCategory) {
-      result = result.filter(item => item.consequenceCategory.toLowerCase().includes(searchFilters.consequenceCategory.toLowerCase()));
+      result = result.filter(item => (item.consequenceCategory || '').toLowerCase().includes(searchFilters.consequenceCategory.toLowerCase()));
     }
     if (searchFilters.iso14224Code) {
-      result = result.filter(item => item.iso14224Code.toLowerCase().includes(searchFilters.iso14224Code.toLowerCase()));
+      result = result.filter(item => (item.iso14224Code || '').toLowerCase().includes(searchFilters.iso14224Code.toLowerCase()));
     }
 
     result.sort((a, b) => {
@@ -145,9 +136,21 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
     });
 
     return result;
-  }, [data, matrixFilter, sortConfig, searchFilters]);
+  }, [data, matrixFilter, barFilter, sortConfig, searchFilters]);
 
-  // --- ACTIONS ---
+  const handleInternalUndo = () => {
+    onUndo();
+    setTimeout(() => {
+       if (viewSheet) {
+          const updatedItem = data.find(i => i.id === viewSheet.item.id);
+          if (updatedItem) setViewSheet({ item: updatedItem });
+       }
+       if (selectedIntel) {
+          const updatedItem = data.find(i => i.id === selectedIntel.id);
+          if (updatedItem) setSelectedIntel(updatedItem);
+       }
+    }, 0);
+  };
 
   const requestSort = (key: keyof RCMItem | 'rpn') => {
     let direction: 'asc' | 'desc' = 'asc';
@@ -262,7 +265,6 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
     }
   };
 
-  // --- INSPECTION POPUP ACTIONS ---
   const updateItemInMainData = (updatedItem: RCMItem) => {
     const newData = data.map(d => d.id === updatedItem.id ? updatedItem : d);
     onUpdate(newData);
@@ -353,6 +355,59 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
     } catch (err) { console.error(err); }
   };
 
+  const handleClassicalCopy = async () => {
+    const headers = [
+      "Component", "Failure mode", "Proposed Task", "Frequency", "Type of task", "Step number", "Actions"
+    ];
+    const rows: string[] = [];
+    
+    let lastComponent = "";
+    
+    processedData.forEach(item => {
+      const sheet = item.inspectionSheet;
+      const componentToShow = item.component === lastComponent ? "" : item.component;
+      lastComponent = item.component;
+
+      const baseInfo = [
+        componentToShow,
+        item.failureMode,
+        item.maintenanceTask,
+        item.interval,
+        item.taskType
+      ];
+
+      if (sheet && sheet.steps && sheet.steps.length > 0) {
+        sheet.steps.forEach((step, idx) => {
+          // Only show failure mode info on the first step row of this item
+          const rowData = idx === 0 
+            ? [...baseInfo, step.step, step.description]
+            : ["", "", "", "", "", step.step, step.description];
+          
+          const finalRow = rowData.map(val => {
+            const str = String(val || '');
+            if (/[\t\n"]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+            return str;
+          }).join("\t");
+          rows.push(finalRow);
+        });
+      } else {
+        const finalRow = [...baseInfo, "", ""].map(val => {
+          const str = String(val || '');
+          if (/[\t\n"]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
+          return str;
+        }).join("\t");
+        rows.push(finalRow);
+      }
+    });
+
+    const text = [headers.join("\t"), ...rows].join("\n");
+    try { 
+      await navigator.clipboard.writeText(text); 
+      setClassicalCopied(true); 
+      setTimeout(() => setClassicalCopied(false), 2000); 
+    } catch (err) { console.error(err); }
+  };
+
   const handleMatrixClick = (s: number, o: number) => {
     if (matrixFilter?.s === s && matrixFilter?.o === o) {
       setMatrixFilter(null);
@@ -361,18 +416,27 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
     }
   };
 
+  const handleBarClick = (id: string) => {
+    if (barFilter === id) {
+      setBarFilter(null);
+    } else {
+      setBarFilter(id);
+    }
+  };
+
   const clearAllFilters = () => {
     setMatrixFilter(null);
+    setBarFilter(null);
     setSearchFilters({ component: '', function: '', failureMode: '', consequenceCategory: '', iso14224Code: '' });
     setSortConfig({ key: 'rpn', direction: 'desc' });
   };
 
-  // --- CHART DATA PREP ---
-  const topRisks = [...data]
+  const topRisks = data
     .sort((a, b) => (b.rpn || 0) - (a.rpn || 0))
     .slice(0, 5)
     .map(item => ({
-      name: item.failureMode.length > 20 ? item.failureMode.substring(0, 20) + '...' : item.failureMode,
+      id: item.id,
+      name: (item.failureMode || '').length > 20 ? (item.failureMode || '').substring(0, 20) + '...' : (item.failureMode || ''),
       rpn: item.rpn || 0
     }));
 
@@ -381,7 +445,85 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
     return sortConfig.direction === 'asc' ? <ArrowUp size={14} className="text-indigo-600" /> : <ArrowDown size={14} className="text-indigo-600" />;
   };
 
-  // --- COMPONENT RENDER ---
+  const renderComponentIntelModal = () => {
+    if (!selectedIntel) return null;
+    const intel = selectedIntel.componentIntel;
+    
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 border border-slate-100">
+          <div className="bg-slate-900 px-8 py-6 flex justify-between items-center text-white shrink-0">
+            <div className="flex items-center gap-4">
+              <div className="p-3 bg-indigo-500/20 rounded-2xl border border-indigo-500/30">
+                <Info size={24} className="text-indigo-200" />
+              </div>
+              <div>
+                <h3 className="font-black text-xl leading-none uppercase tracking-tight">{selectedIntel.component}</h3>
+                <p className="text-[10px] text-slate-400 mt-1.5 uppercase tracking-widest font-bold">Physical Component Intel</p>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                onClick={handleInternalUndo}
+                disabled={!canUndo}
+                className={`p-2 rounded-full transition-all ${
+                  canUndo ? 'hover:bg-white/10 text-white' : 'text-slate-600 opacity-20'
+                }`}
+                title="Undo last action"
+              >
+                <Undo2 size={24} />
+              </button>
+              <button onClick={() => setSelectedIntel(null)} className="hover:bg-white/10 p-2 rounded-full transition-colors">
+                <X size={24} />
+              </button>
+            </div>
+          </div>
+          
+          <div className="p-8 space-y-8 bg-slate-50/30">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-indigo-600">
+                <FileText size={18} />
+                <h4 className="text-xs font-black uppercase tracking-widest">Description</h4>
+              </div>
+              <p className="text-sm text-slate-700 leading-relaxed font-medium bg-white p-4 rounded-2xl border border-slate-100 shadow-sm italic">
+                {intel?.description || "No description provided."}
+              </p>
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-amber-600">
+                  <MapPin size={18} />
+                  <h4 className="text-xs font-black uppercase tracking-widest">Location</h4>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed font-semibold bg-white p-4 rounded-2xl border border-slate-100 shadow-sm min-h-[80px]">
+                  {intel?.location || "Location context unavailable."}
+                </p>
+              </div>
+              <div className="space-y-3">
+                <div className="flex items-center gap-2 text-emerald-600">
+                  <Eye size={18} />
+                  <h4 className="text-xs font-black uppercase tracking-widest">Visual Cues</h4>
+                </div>
+                <p className="text-xs text-slate-600 leading-relaxed font-semibold bg-white p-4 rounded-2xl border border-slate-100 shadow-sm min-h-[80px]">
+                  {intel?.visualCues || "Identification cues not defined."}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="px-8 py-6 bg-white border-t border-slate-50 flex justify-end">
+             <button 
+               onClick={() => setSelectedIntel(null)}
+               className="px-8 py-3 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-lg active:scale-95"
+             >
+               Understood
+             </button>
+          </div>
+        </div>
+      </div>
+    );
+  };
 
   const renderInspectionSheet = () => {
     if (!viewSheet || !viewSheet.item.inspectionSheet) return null;
@@ -393,7 +535,6 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
     return (
       <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 transition-all">
         <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl h-[90vh] flex flex-col animate-in zoom-in-95 duration-200">
-          
           <div className="bg-slate-900 px-8 py-5 flex justify-between items-center text-white shrink-0 rounded-t-xl">
             <div className="flex items-center gap-4">
               <div className="p-2.5 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
@@ -404,9 +545,21 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
                 <p className="text-sm text-slate-400 font-mono mt-0.5">{item.component} • {item.id.split('-').pop()?.toUpperCase()}</p>
               </div>
             </div>
-            <button onClick={() => setViewSheet(null)} className="hover:bg-white/10 p-2 rounded-full transition-colors">
-              <X size={24} />
-            </button>
+            <div className="flex items-center gap-3">
+              <button
+                onClick={handleInternalUndo}
+                disabled={!canUndo}
+                className={`p-2.5 rounded-xl transition-all ${
+                  canUndo ? 'bg-white/10 text-white hover:bg-white/20' : 'text-slate-600 opacity-20'
+                }`}
+                title="Undo last action"
+              >
+                <Undo2 size={24} />
+              </button>
+              <button onClick={() => setViewSheet(null)} className="hover:bg-white/10 p-2 rounded-full transition-colors">
+                <X size={24} />
+              </button>
+            </div>
           </div>
           
           <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 p-8">
@@ -442,7 +595,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
                         <div className="h-8 w-px bg-slate-100"></div>
                         <div>
                            <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">Risk Level (RPN)</span>
-                           <span className={`text-sm font-bold flex items-center gap-1.5 ${getScoreColor(item.severity)}`}><AlertOctagon size={14} /> {item.rpn}</span>
+                           <span className={`text-sm font-bold flex items-center gap-1.5 ${getScoreColor(item.severity || 0)}`}><AlertOctagon size={14} /> {item.rpn}</span>
                         </div>
                     </div>
                  </div>
@@ -564,7 +717,6 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
                   })}
                 </tbody>
               </table>
-              <div className="p-6 bg-slate-50 border-t border-slate-200"><label className="block text-xs font-bold uppercase text-slate-400 mb-2">Technician Feedback / Remarks</label><div className="h-24 w-full border-2 border-dashed border-slate-300 rounded-lg bg-white flex items-center justify-center text-slate-300 text-sm hover:border-indigo-300 hover:text-indigo-300 transition-all cursor-text">Write notes here...</div></div>
             </div>
           </div>
           <div className="bg-white px-8 py-5 flex justify-between shrink-0 border-t border-slate-200 rounded-b-xl shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10">
@@ -576,46 +728,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
     );
   };
 
-  const handleExportCSV = () => {
-    const headers = [
-      "Component", "Function", "Functional Failure", "Failure Mode", "Effect", 
-      "Consequence Cat.", "ISO 14224 Code",
-      "Criticality", "S", "O", "D", "RPN",
-      "Proposed Task", "Interval", "Task Type",
-      "Step #", "Action", "Method/Technique", "Acceptance Criteria"
-    ];
-    const rows: string[] = [];
-    processedData.forEach(item => {
-      const sheet = item.inspectionSheet;
-      const baseRow = [
-        item.component, item.function, item.functionalFailure || '', item.failureMode, item.failureEffect,
-        item.consequenceCategory, item.iso14224Code,
-        item.criticality, item.severity, item.occurrence, item.detection, item.rpn,
-        item.maintenanceTask, item.interval, item.taskType
-      ];
-      if (sheet && sheet.steps && sheet.steps.length > 0) {
-        sheet.steps.forEach(step => {
-          const stepRow = [step.step, step.description, step.technique, step.criteria];
-          const finalRow = [...baseRow, ...stepRow].map(val => `"${String(val).replace(/"/g, '""')}"`).join(",");
-          rows.push(finalRow);
-        });
-      } else {
-        const legacyInfo = sheet?.checkPointDescription || "";
-        const stepRow = ["", legacyInfo, sheet?.type || "", sheet?.criteriaLimits || ""];
-        const finalRow = [...baseRow, ...stepRow].map(val => `"${String(val).replace(/"/g, '""')}"`).join(",");
-        rows.push(finalRow);
-      }
-    });
-    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows].join("\n");
-    const encodedUri = encodeURI(csvContent);
-    const link = document.createElement("a");
-    link.setAttribute("href", encodedUri);
-    link.setAttribute("download", "rcm_analysis_full.csv");
-    document.body.appendChild(link);
-    link.click();
-  };
-
-  const isFiltered = !!matrixFilter || !!searchFilters.component || !!searchFilters.function || !!searchFilters.failureMode || !!searchFilters.consequenceCategory || !!searchFilters.iso14224Code;
+  const isFiltered = !!matrixFilter || !!barFilter || !!searchFilters.component || !!searchFilters.function || !!searchFilters.failureMode || !!searchFilters.consequenceCategory || !!searchFilters.iso14224Code;
 
   const stats = [
     { label: 'Total Failure Modes', value: data.length, icon: ListChecks, color: 'text-blue-600', bg: 'bg-blue-50' },
@@ -629,6 +742,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
   return (
     <div className="space-y-8 animate-fade-in relative w-full">
       {renderInspectionSheet()}
+      {renderComponentIntelModal()}
 
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {stats.map((stat, i) => (
@@ -675,8 +789,47 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
           </div>
         </div>
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col">
-          <h3 className="text-lg font-bold text-slate-800 mb-6">Top 5 Critical Risks (RPN)</h3>
-          <div className="flex-1 min-h-[250px]"><ResponsiveContainer width="100%" height="100%"><BarChart data={topRisks} layout="vertical" margin={{ left: 10, right: 30 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" /><XAxis type="number" hide /><YAxis dataKey="name" type="category" width={120} tick={{fontSize: 11, fill: '#64748b'}} /><RechartsTooltip cursor={{fill: '#f1f5f9'}} contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} /><Bar dataKey="rpn" radius={[0, 4, 4, 0]} barSize={24}>{topRisks.map((entry, index) => (<Cell key={index} fill={entry.rpn >= 150 ? '#ef4444' : '#f59e0b'} />))}</Bar></BarChart></ResponsiveContainer></div>
+          <div className="mb-6">
+            <h3 className="text-lg font-bold text-slate-800">Top 5 Critical Risks (RPN)</h3>
+            <p className="text-sm text-slate-500 mt-1">Click bars to isolate failure modes.</p>
+          </div>
+          <div className="flex-1 min-h-[250px]">
+            <ResponsiveContainer width="100%" height="100%">
+              <BarChart 
+                data={topRisks} 
+                layout="vertical" 
+                margin={{ left: 10, right: 30 }}
+              >
+                <CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="#e2e8f0" />
+                <XAxis type="number" hide />
+                <YAxis dataKey="name" type="category" width={120} tick={{fontSize: 11, fill: '#64748b'}} />
+                <RechartsTooltip 
+                  cursor={{fill: '#f1f5f9'}} 
+                  contentStyle={{borderRadius: '8px', border: 'none', boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'}} 
+                />
+                <Bar 
+                  dataKey="rpn" 
+                  radius={[0, 4, 4, 0]} 
+                  barSize={24}
+                  onClick={(data) => handleBarClick(data.id)}
+                  className="cursor-pointer"
+                >
+                  {topRisks.map((entry, index) => {
+                    const isSelected = barFilter === entry.id;
+                    const baseColor = entry.rpn >= 120 ? '#ef4444' : '#f59e0b';
+                    return (
+                      <Cell 
+                        key={index} 
+                        fill={isSelected ? '#4f46e5' : baseColor} 
+                        opacity={barFilter && !isSelected ? 0.3 : 1}
+                        className="transition-all duration-300"
+                      />
+                    );
+                  })}
+                </Bar>
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
         </div>
       </div>
 
@@ -686,7 +839,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
           <div className="flex flex-wrap justify-center items-center gap-3">
             <button onClick={handleGenerateAllSheets} disabled={generatingSheets} className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all border shadow-sm ${generatingSheets ? 'bg-indigo-50 text-indigo-400 border-indigo-100 cursor-wait' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700 hover:shadow-md hover:-translate-y-0.5'}`}>{generatingSheets ? <Loader2 size={16} className="animate-spin" /> : <ClipboardList size={16} />}{generatingSheets ? `Generating ${progress.current}/${progress.total}` : "Generate Sheets"}</button>
             <button onClick={handleCopy} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 rounded-lg transition-colors border border-slate-200 shadow-sm">{copied ? <CheckCircle size={16} className="text-green-600" /> : <Copy size={16} />}{copied ? "Copied!" : "Excel Flat Copy"}</button>
-            <button onClick={handleExportCSV} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 rounded-lg transition-colors border border-slate-200 shadow-sm"><FileText size={16} /> Export CSV</button>
+            <button onClick={handleClassicalCopy} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors border border-indigo-200 shadow-sm">{classicalCopied ? <CheckCircle size={16} className="text-indigo-600" /> : <LayoutList size={16} />}{classicalCopied ? "Sheet Copied!" : "Classical Decision Copy"}</button>
           </div>
         </div>
 
@@ -695,6 +848,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
              <div className="flex items-center gap-3"><span className="text-sm font-medium flex items-center gap-1.5"><Filter size={14} className="text-indigo-400" />Active Filters Applied</span>
                <div className="flex gap-2">
                  {matrixFilter && <span className="text-[10px] bg-indigo-500/20 px-2 py-0.5 rounded border border-indigo-500/30">Matrix: S{matrixFilter.s} O{matrixFilter.o}</span>}
+                 {barFilter && <span className="text-[10px] bg-indigo-500/20 px-2 py-0.5 rounded border border-indigo-500/30">Chart Isolation: On</span>}
                  {searchFilters.component && <span className="text-[10px] bg-slate-700 px-2 py-0.5 rounded border border-slate-600">Comp: {searchFilters.component}</span>}
                  {searchFilters.function && <span className="text-[10px] bg-slate-700 px-2 py-0.5 rounded border border-slate-600">Func: {searchFilters.function}</span>}
                  {searchFilters.failureMode && <span className="text-[10px] bg-slate-700 px-2 py-0.5 rounded border border-slate-600">Fail: {searchFilters.failureMode}</span>}
@@ -713,7 +867,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
                 <th className="px-6 py-4 min-w-[150px]"><div className="flex flex-col gap-2"><button onClick={() => requestSort('component')} className="flex items-center gap-2 hover:text-indigo-600 transition-colors">Component {renderSortIcon('component')}</button><div className="relative group/search"><Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" /><input type="text" placeholder="Search..." value={searchFilters.component} onChange={(e) => handleSearchChange('component', e.target.value)} className="w-full pl-7 pr-2 py-1 bg-white border border-slate-200 rounded text-[10px] font-normal lowercase focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" /></div></div></th>
                 <th className="px-6 py-4 min-w-[150px]"><div className="flex flex-col gap-2"><button onClick={() => requestSort('consequenceCategory')} className="flex items-center gap-2 hover:text-indigo-600 transition-colors">Consequence {renderSortIcon('consequenceCategory')}</button><div className="relative group/search"><Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" /><input type="text" placeholder="Search..." value={searchFilters.consequenceCategory} onChange={(e) => handleSearchChange('consequenceCategory', e.target.value)} className="w-full pl-7 pr-2 py-1 bg-white border border-slate-200 rounded text-[10px] font-normal lowercase focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" /></div></div></th>
                 <th className="px-6 py-4 min-w-[120px]"><div className="flex flex-col gap-2"><button onClick={() => requestSort('iso14224Code')} className="flex items-center gap-2 hover:text-indigo-600 transition-colors">ISO 14224 {renderSortIcon('iso14224Code')}</button><div className="relative group/search"><Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" /><input type="text" placeholder="Search..." value={searchFilters.iso14224Code} onChange={(e) => handleSearchChange('iso14224Code', e.target.value)} className="w-full pl-7 pr-2 py-1 bg-white border border-slate-200 rounded text-[10px] font-normal lowercase focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none transition-all" /></div></div></th>
-                <th className="px-6 py-4 min-w-[200px]"><div className="flex flex-col gap-2"><button onClick={() => requestSort('failureMode')} className="flex items-center gap-2 hover:text-indigo-600 transition-colors">Failure Mode {renderSortIcon('failureMode')}</button><div className="relative group/search"><Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" /><input type="text" placeholder="Search..." value={searchFilters.failureMode} onChange={(e) => handleSearchChange('failureMode', e.target.value)} className="w-full pl-7 pr-2 py-1 bg-white border border-slate-200 rounded text-[10px] font-normal lowercase focus:ring-1 focus:ring-indigo-500 outline-none" /></div></div></th>
+                <th className="px-6 py-4 min-w-[200px]"><div className="flex flex-col gap-2"><button onClick={() => requestSort('failureMode')} className="flex items-center gap-2 hover:text-indigo-600 transition-colors">Failure Mode {renderSortIcon('failureMode')}</button><div className="relative group/search"><Search size={12} className="absolute left-2 top-1/2 -translate-y-1/2 text-slate-400" /><input type="text" placeholder="Search..." value={searchFilters.failureMode} onChange={(e) => handleSearchChange('failureMode', e.target.value)} className="w-full pl-7 pr-2 py-1 bg-white border border-slate-200 rounded text-[10px] font-normal lowercase focus:ring-1 focus:ring-indigo-500 focus:border-indigo-500 outline-none" /></div></div></th>
                 <th className="px-2 py-4 w-12 text-center bg-slate-100/50 border-l border-slate-200">S</th>
                 <th className="px-2 py-4 w-12 text-center bg-slate-100/50">O</th>
                 <th className="px-2 py-4 w-12 text-center bg-slate-100/50">D</th>
@@ -728,6 +882,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
                 <tr><td colSpan={13} className="text-center py-20 bg-slate-50/30"><div className="flex flex-col items-center gap-2 text-slate-400"><FilterX size={48} strokeWidth={1} /><p className="font-medium">No matches found for active filters.</p><button onClick={clearAllFilters} className="text-indigo-600 text-xs hover:underline mt-2">Clear all filters</button></div></td></tr>
               ) : (
                 processedData.map((item) => {
+                  if (!item) return null;
                   const isEditing = editingId === item.id; const isRegenerating = regeneratingIds.has(item.id);
                   if (isEditing && editForm) {
                     return (
@@ -755,12 +910,18 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
                     );
                   }
                   const rpn = item.rpn || 0; const rpnStyle = getRPNColorStyle(rpn);
+                  const consCat = item.consequenceCategory || '';
                   return (
-                    <tr key={item.id} className={`group hover:bg-slate-50 ${isRegenerating ? 'opacity-60 bg-slate-50' : ''}`}>
-                      <td className="px-6 py-4 font-medium align-top leading-tight text-xs">{item.component}</td>
+                    <tr key={item.id} className={`group hover:bg-slate-50 ${isRegenerating ? 'opacity-60 bg-slate-50' : ''} ${barFilter === item.id ? 'bg-indigo-50/50' : ''}`}>
+                      <td className="px-6 py-4 font-medium align-top leading-tight text-xs">
+                        <div className="flex items-center gap-2">
+                           <span className="flex-1">{item.component}</span>
+                           <button onClick={() => setSelectedIntel(item)} className="p-1 text-slate-300 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-all opacity-0 group-hover:opacity-100" title="Physical Component Intel"><Info size={14} /></button>
+                        </div>
+                      </td>
                       <td className="px-6 py-4 align-top">
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${item.consequenceCategory.includes('Hidden') ? 'bg-orange-50 text-orange-700 border-orange-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
-                          {item.consequenceCategory}
+                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${consCat.includes('Hidden') ? 'bg-orange-50 text-orange-700 border-orange-200' : 'bg-blue-50 text-blue-700 border-blue-200'}`}>
+                          {consCat}
                         </span>
                       </td>
                       <td className="px-6 py-4 align-top">
@@ -769,9 +930,9 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate }
                         </span>
                       </td>
                       <td className="px-6 py-4 align-top"><div className="space-y-2"><div className="font-semibold text-[11px] border p-1 rounded inline-block bg-white shadow-sm leading-tight">{item.failureMode}</div><div className="text-slate-500 text-[10px] leading-relaxed line-clamp-2">{item.failureEffect}</div></div></td>
-                      <td className="px-2 py-4 align-middle text-center border-l"><span className={getScoreColor(item.severity)}>{item.severity}</span></td>
-                      <td className="px-2 py-4 align-middle text-center"><span className={getScoreColor(item.occurrence)}>{item.occurrence}</span></td>
-                      <td className="px-2 py-4 align-middle text-center"><span className={getScoreColor(item.detection)}>{item.detection}</span></td>
+                      <td className="px-2 py-4 align-middle text-center border-l"><span className={getScoreColor(item.severity || 0)}>{item.severity || 0}</span></td>
+                      <td className="px-2 py-4 align-middle text-center"><span className={getScoreColor(item.occurrence || 0)}>{item.occurrence || 0}</span></td>
+                      <td className="px-2 py-4 align-middle text-center"><span className={getScoreColor(item.detection || 0)}>{item.detection || 0}</span></td>
                       <td className="px-4 py-4 align-middle border-r"><div className="flex flex-col gap-1"><span className={`text-xs font-bold ${rpnStyle.text}`}>{rpn}</span><div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full ${rpnStyle.bar}`} style={{width: `${Math.min((rpn/400)*100, 100)}%`}}></div></div></div></td>
                       <td className="px-6 py-4 align-top"><div className="font-medium text-xs leading-tight">{item.maintenanceTask}</div><div className="text-[10px] text-slate-400 font-mono mt-1">{item.interval}</div></td>
                       <td className="px-6 py-4 align-middle text-center">
