@@ -1,7 +1,8 @@
 
 import React, { useState, useMemo } from 'react';
 import { RCMItem, InspectionSheet, InspectionStep, ConsequenceCategory, ComponentIntel } from '../types';
-import { generateInspectionSheet } from '../services/geminiService';
+import { generateInspectionSheet, generateComponentIntel } from '../services/geminiService';
+import { IntervalOptimizerModal } from './IntervalOptimizerModal';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as RechartsTooltip, Cell 
 } from 'recharts';
@@ -9,7 +10,7 @@ import {
   AlertTriangle, CheckCircle, Clock, Activity, FileText, 
   Pencil, Trash2, Save, X, ClipboardList, Loader2,
   FileCheck, File, Printer, Copy, AlertOctagon, FilterX, User, ShieldAlert, Wrench, Search, ChevronRight, Sparkles, RefreshCw,
-  ArrowUpDown, ArrowUp, ArrowDown, Filter, Plus, Tag, ShieldCheck, Zap, ListChecks, Info, MapPin, Eye, Undo2, LayoutList
+  ArrowUpDown, ArrowUp, ArrowDown, Filter, Plus, Tag, ShieldCheck, Zap, ListChecks, Info, MapPin, Eye, Undo2, LayoutList, Target, Palette, Image as ImageIcon, Box
 } from 'lucide-react';
 
 interface AnalysisResultProps {
@@ -26,33 +27,6 @@ const CONSEQUENCE_LABELS: ConsequenceCategory[] = [
   'Evident - Operational',
   'Evident - Non-Operational'
 ];
-
-const COLORS = {
-  High: '#ef4444',
-  Medium: '#f59e0b',
-  Low: '#10b981'
-};
-
-const getTaskImage = (task: string): string => {
-  const t = (task || '').toLowerCase();
-  if (t.includes('thermal') || t.includes('infrared') || t.includes('thermography') || t.includes('heat') || t.includes('temperature')) 
-    return 'https://images.unsplash.com/photo-1504917595217-d4dc5ebe6122?auto=format&fit=crop&w=800&q=80';
-  if (t.includes('vibration') || t.includes('accelerometer') || t.includes('oscillation') || t.includes('align')) 
-    return 'https://images.unsplash.com/photo-1581094288338-2314dddb7ece?auto=format&fit=crop&w=800&q=80';
-  if (t.includes('oil') || t.includes('lubricat') || t.includes('grease') || t.includes('sample') || t.includes('fluid')) 
-    return 'https://images.unsplash.com/photo-1621905252507-b35492cc74b4?auto=format&fit=crop&w=800&q=80';
-  if (t.includes('motor') || t.includes('voltage') || t.includes('current') || t.includes('insulation') || t.includes('winding') || t.includes('electric')) 
-    return 'https://images.unsplash.com/photo-1581092918056-0c4c3acd3789?auto=format&fit=crop&w=800&q=80';
-  if (t.includes('ultrasonic') || t.includes('sound') || t.includes('acoustic') || t.includes('nds') || t.includes('ndt')) 
-    return 'https://images.unsplash.com/photo-1581092335397-9583eb92d232?auto=format&fit=crop&w=800&q=80';
-  if (t.includes('visual') || t.includes('check') || t.includes('inspect') || t.includes('look') || t.includes('monitor')) 
-    return 'https://images.unsplash.com/photo-1581092160562-40aa08e78837?auto=format&fit=crop&w=800&q=80';
-  if (t.includes('clean') || t.includes('wash') || t.includes('sweep') || t.includes('housekeeping')) 
-    return 'https://images.unsplash.com/photo-1581578731117-104f8a74695b?auto=format&fit=crop&w=800&q=80';
-  if (t.includes('replace') || t.includes('remove') || t.includes('install') || t.includes('bearing') || t.includes('seal') || t.includes('valve') || t.includes('pump')) 
-    return 'https://images.unsplash.com/photo-1530124566582-a618bc2615dc?auto=format&fit=crop&w=800&q=80';
-  return 'https://images.unsplash.com/photo-1565514020176-db5b550dd707?auto=format&fit=crop&w=800&q=80';
-};
 
 const getRPNColorStyle = (rpn: number) => {
   if (rpn >= 120) return { bg: 'bg-red-100', text: 'text-red-900', bar: 'bg-red-500' };
@@ -74,7 +48,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
   const [barFilter, setBarFilter] = useState<string | null>(null);
   const [selectedIntel, setSelectedIntel] = useState<RCMItem | null>(null);
   
-  const [sortConfig, setSortConfig] = useState<{ key: keyof RCMItem | 'rpn'; direction: 'asc' | 'desc' }>({ key: 'rpn', direction: 'desc' });
+  const [sortConfig, setSortConfig] = useState<{ key: keyof RCMItem | 'rpn' | 'status_color'; direction: 'asc' | 'desc' }>({ key: 'component', direction: 'asc' });
   const [searchFilters, setSearchFilters] = useState({
     component: '',
     function: '',
@@ -84,9 +58,11 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
   });
   
   const [generatingSheets, setGeneratingSheets] = useState(false);
+  const [generatingIntel, setGeneratingIntel] = useState(false);
   const [progress, setProgress] = useState({ current: 0, total: 0 });
   const [viewSheet, setViewSheet] = useState<{item: RCMItem} | null>(null);
   const [editingStepIdx, setEditingStepIdx] = useState<number | null>(null);
+  const [optimizingItem, setOptimizingItem] = useState<RCMItem | null>(null);
   
   const [regeneratingIds, setRegeneratingIds] = useState<Set<string>>(new Set());
   const [copied, setCopied] = useState(false);
@@ -123,12 +99,21 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
     }
 
     result.sort((a, b) => {
-      const aVal = a[sortConfig.key];
-      const bVal = b[sortConfig.key];
+      const multiplier = sortConfig.direction === 'asc' ? 1 : -1;
+
+      if (sortConfig.key === 'status_color') {
+        const aVal = (a.isNew ? 1 : 0) * 1000 + (a.rpn || 0);
+        const bVal = (b.isNew ? 1 : 0) * 1000 + (b.rpn || 0);
+        return (bVal - aVal) * multiplier;
+      }
+
+      const aVal = a[sortConfig.key as keyof RCMItem];
+      const bVal = b[sortConfig.key as keyof RCMItem];
+      
       if (aVal === bVal) return 0;
       if (aVal === undefined || aVal === null) return 1;
       if (bVal === undefined || bVal === null) return -1;
-      const multiplier = sortConfig.direction === 'asc' ? 1 : -1;
+      
       if (typeof aVal === 'string' && typeof bVal === 'string') {
         return aVal.localeCompare(bVal) * multiplier;
       }
@@ -152,9 +137,11 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
     }, 0);
   };
 
-  const requestSort = (key: keyof RCMItem | 'rpn') => {
+  const requestSort = (key: keyof RCMItem | 'rpn' | 'status_color') => {
     let direction: 'asc' | 'desc' = 'asc';
     if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    } else if (key === 'rpn' || key === 'status_color') {
       direction = 'desc';
     }
     setSortConfig({ key, direction });
@@ -192,7 +179,8 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
     const updatedForm = {
        ...editForm,
        rpn: (editForm.severity || 1) * (editForm.occurrence || 1) * (editForm.detection || 1),
-       inspectionSheet: needsRegeneration ? undefined : editForm.inspectionSheet
+       inspectionSheet: needsRegeneration ? undefined : editForm.inspectionSheet,
+       isNew: false
     };
     const newData = data.map(item => item.id === editingId ? updatedForm : item);
     onUpdate(newData);
@@ -246,8 +234,32 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
     setGeneratingSheets(false);
   };
 
+  const handleGenerateMissingIntel = async () => {
+    const itemsToProcess = data.filter(item => !item.componentIntel || !item.componentIntel.description);
+    if (itemsToProcess.length === 0) {
+      alert("All components already have physical intelligence metadata.");
+      return;
+    }
+    setGeneratingIntel(true);
+    setProgress({ current: 0, total: itemsToProcess.length });
+    let currentData = [...data];
+    const BATCH_SIZE = 4;
+    for (let i = 0; i < itemsToProcess.length; i += BATCH_SIZE) {
+      const batch = itemsToProcess.slice(i, i + BATCH_SIZE);
+      await Promise.all(batch.map(async (item) => {
+        try {
+          const intel = await generateComponentIntel(item.component);
+          const index = currentData.findIndex(d => d.id === item.id);
+          if (index !== -1) currentData[index] = { ...currentData[index], componentIntel: intel };
+        } catch (e) { console.error(e); }
+      }));
+      setProgress(prev => ({ ...prev, current: Math.min(prev.total, i + BATCH_SIZE) }));
+      onUpdate([...currentData]);
+    }
+    setGeneratingIntel(false);
+  };
+
   const handleGenerateSingleSheet = async (item: RCMItem) => {
-    setGeneratingSheets(true);
     setRegeneratingIds(prev => new Set(prev).add(item.id));
     try {
       const sheet = await generateInspectionSheet(item);
@@ -255,14 +267,22 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
       onUpdate(newData);
       const updatedItem = newData.find(d => d.id === item.id);
       if (updatedItem) setViewSheet({ item: updatedItem });
-    } catch (e) { alert("Failed to generate."); } finally { 
-      setGeneratingSheets(false); 
+    } catch (e) { 
+      alert("Failed to generate."); 
+    } finally { 
       setRegeneratingIds(prev => {
         const next = new Set(prev);
         next.delete(item.id);
         return next;
       });
     }
+  };
+
+  const handleApplyOptimizedInterval = (newInterval: string) => {
+    if (!optimizingItem) return;
+    const newData = data.map(d => d.id === optimizingItem.id ? { ...d, interval: newInterval } : d);
+    onUpdate(newData);
+    setOptimizingItem(null);
   };
 
   const updateItemInMainData = (updatedItem: RCMItem) => {
@@ -357,19 +377,23 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
 
   const handleClassicalCopy = async () => {
     const headers = [
-      "Component", "Failure mode", "Proposed Task", "Frequency", "Type of task", "Step number", "Actions"
+      "Component", "Explanation", "Failure mode", "Proposed Task", "Frequency", "Type of task", "Step number", "Actions"
     ];
     const rows: string[] = [];
-    
-    let lastComponent = "";
+    let lastComponentId = "";
     
     processedData.forEach(item => {
       const sheet = item.inspectionSheet;
-      const componentToShow = item.component === lastComponent ? "" : item.component;
-      lastComponent = item.component;
+      // We use item ID to handle repeated components that might have different failure modes
+      const isNewEntry = item.id !== lastComponentId;
+      lastComponentId = item.id;
+
+      // Extract description text accurately
+      const explanationText = item.componentIntel?.description || "Technical metadata unavailable.";
 
       const baseInfo = [
-        componentToShow,
+        item.component,
+        explanationText,
         item.failureMode,
         item.maintenanceTask,
         item.interval,
@@ -378,10 +402,10 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
 
       if (sheet && sheet.steps && sheet.steps.length > 0) {
         sheet.steps.forEach((step, idx) => {
-          // Only show failure mode info on the first step row of this item
+          // In classical decision copy, if it's the first step of a failure mode, we include the base info
           const rowData = idx === 0 
             ? [...baseInfo, step.step, step.description]
-            : ["", "", "", "", "", step.step, step.description];
+            : ["", "", "", "", "", "", step.step, step.description];
           
           const finalRow = rowData.map(val => {
             const str = String(val || '');
@@ -391,6 +415,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
           rows.push(finalRow);
         });
       } else {
+        // Fallback for items without steps
         const finalRow = [...baseInfo, "", ""].map(val => {
           const str = String(val || '');
           if (/[\t\n"]/.test(str)) return `"${str.replace(/"/g, '""')}"`;
@@ -428,7 +453,7 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
     setMatrixFilter(null);
     setBarFilter(null);
     setSearchFilters({ component: '', function: '', failureMode: '', consequenceCategory: '', iso14224Code: '' });
-    setSortConfig({ key: 'rpn', direction: 'desc' });
+    setSortConfig({ key: 'component', direction: 'asc' });
   };
 
   const topRisks = data
@@ -440,9 +465,178 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
       rpn: item.rpn || 0
     }));
 
-  const renderSortIcon = (key: keyof RCMItem | 'rpn') => {
+  const renderSortIcon = (key: keyof RCMItem | 'rpn' | 'status_color') => {
     if (sortConfig.key !== key) return <ArrowUpDown size={14} className="text-slate-300" />;
     return sortConfig.direction === 'asc' ? <ArrowUp size={14} className="text-indigo-600" /> : <ArrowDown size={14} className="text-indigo-600" />;
+  };
+
+  const renderInspectionSheet = () => {
+    if (!viewSheet) return null;
+    const item = viewSheet.item;
+    const sheet = item.inspectionSheet;
+    if (!sheet) return null;
+    const isRegenerating = regeneratingIds.has(item.id);
+
+    return (
+      <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-7xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 border border-slate-100 max-h-[95vh]">
+          {/* Header */}
+          <div className="bg-slate-900 px-10 py-8 flex justify-between items-center text-white shrink-0">
+            <div className="flex items-center gap-6">
+              <div className="p-4 bg-emerald-500/20 rounded-[1.5rem] border border-emerald-500/30 shadow-inner">
+                <FileCheck size={32} className="text-emerald-200" />
+              </div>
+              <div>
+                <h3 className="font-black text-2xl tracking-tighter uppercase leading-none">Maintenance Inspection Protocol</h3>
+                <div className="flex items-center gap-3 mt-2.5">
+                   <span className="text-[10px] text-slate-400 font-black uppercase tracking-[0.2em]">{item.component}</span>
+                   <div className="w-1 h-1 rounded-full bg-slate-700"></div>
+                   <span className="text-[10px] text-emerald-400 font-black uppercase tracking-[0.2em]">Validated Asset Route</span>
+                </div>
+              </div>
+            </div>
+            <div className="flex items-center gap-4">
+              <button
+                onClick={handleInternalUndo}
+                disabled={!canUndo}
+                className={`p-3 rounded-full transition-all ${
+                  canUndo ? 'bg-white/10 text-white hover:bg-white/20' : 'text-slate-600 opacity-20'
+                }`}
+                title="Undo last action"
+              >
+                <Undo2 size={28} />
+              </button>
+              <button onClick={() => setViewSheet(null)} className="p-3 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white rounded-full transition-all">
+                <X size={28} />
+              </button>
+            </div>
+          </div>
+
+          <div className="p-10 overflow-y-auto custom-scrollbar flex-1 bg-slate-50/50">
+            {/* Metadata Grid */}
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
+              <div className="bg-white p-6 rounded-[1.8rem] border border-slate-100 shadow-sm">
+                <div className="flex items-center gap-3 mb-2 opacity-60">
+                   <User size={14} className="text-slate-900" />
+                   <span className="text-[9px] font-black uppercase tracking-widest">Responsibility</span>
+                </div>
+                <p className="text-sm font-black text-slate-900 uppercase tracking-tight">{sheet.responsibility}</p>
+              </div>
+              <div className="bg-white p-6 rounded-[1.8rem] border border-slate-100 shadow-sm">
+                <div className="flex items-center gap-3 mb-2 opacity-60">
+                   <Clock size={14} className="text-slate-900" />
+                   <span className="text-[9px] font-black uppercase tracking-widest">Est. Duration</span>
+                </div>
+                <p className="text-sm font-black text-slate-900 uppercase tracking-tight">{sheet.estimatedTime}</p>
+              </div>
+              <div className="bg-white p-6 rounded-[1.8rem] border border-slate-100 shadow-sm">
+                <div className="flex items-center gap-3 mb-2 opacity-60">
+                   <ShieldAlert size={14} className="text-red-600" />
+                   <span className="text-[9px] font-black uppercase tracking-widest">Safety Req.</span>
+                </div>
+                <p className="text-[11px] font-bold text-slate-700 leading-tight">{sheet.safetyPrecautions}</p>
+              </div>
+              <div className="bg-white p-6 rounded-[1.8rem] border border-slate-100 shadow-sm">
+                <div className="flex items-center gap-3 mb-2 opacity-60">
+                   <Wrench size={14} className="text-indigo-600" />
+                   <span className="text-[9px] font-black uppercase tracking-widest">Tooling</span>
+                </div>
+                <p className="text-[11px] font-bold text-slate-700 leading-tight">{sheet.toolsRequired}</p>
+              </div>
+            </div>
+
+            {/* Steps Container */}
+            <div className="bg-white rounded-[2.2rem] border border-slate-200 overflow-hidden shadow-2xl">
+              <table className="w-full text-left table-fixed">
+                <thead className="bg-slate-900 border-b border-slate-800">
+                  <tr className="text-[10px] font-black uppercase tracking-[0.2em] text-slate-400">
+                    <th className="px-8 py-5 w-16 text-center">Step</th>
+                    <th className="px-8 py-5 flex-1">Technical Action Sequence</th>
+                    <th className="px-8 py-5 w-48 text-center">Method</th>
+                    <th className="px-8 py-5 w-72">Acceptance Criteria</th>
+                    <th className="px-8 py-5 w-24 text-right"></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {sheet.steps?.map((step, idx) => (
+                    <tr key={idx} className="group hover:bg-slate-50 transition-all">
+                      <td className="px-8 py-6 text-xs font-black text-indigo-600 text-center">
+                        <div className="w-8 h-8 rounded-lg bg-indigo-50 flex items-center justify-center mx-auto">{step.step}</div>
+                      </td>
+                      <td className="px-8 py-6">
+                        {editingStepIdx === idx ? (
+                          <textarea 
+                            value={step.description}
+                            onChange={(e) => handleUpdateStepField(idx, 'description', e.target.value)}
+                            onBlur={() => setEditingStepIdx(null)}
+                            autoFocus
+                            className="w-full p-4 text-sm bg-slate-50 border-2 border-indigo-100 rounded-2xl focus:ring-4 focus:ring-indigo-100 outline-none font-medium resize-none"
+                            rows={3}
+                          />
+                        ) : (
+                          <p className="text-sm font-bold text-slate-800 leading-relaxed uppercase tracking-tight">{step.description}</p>
+                        )}
+                      </td>
+                      <td className="px-8 py-6 text-center">
+                         <div className="inline-flex items-center gap-1.5 px-2.5 py-1 bg-indigo-50 border border-indigo-100 rounded-lg">
+                            <span className="text-[9px] font-black text-indigo-700 uppercase tracking-tighter truncate max-w-[100px]">{step.technique}</span>
+                         </div>
+                      </td>
+                      <td className="px-8 py-6">
+                         <div className="flex items-start gap-3 p-3 bg-emerald-50/30 rounded-xl border border-emerald-100/50">
+                            <CheckCircle size={12} className="mt-0.5 text-emerald-600 shrink-0" />
+                            <p className="text-[11px] font-bold text-emerald-800 leading-tight">{step.criteria}</p>
+                         </div>
+                      </td>
+                      <td className="px-8 py-6 text-right">
+                        <div className="flex justify-end gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button onClick={() => setEditingStepIdx(idx)} className="p-2 bg-slate-100 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all"><Pencil size={14} /></button>
+                          <button onClick={() => handleDeleteStep(idx)} className="p-2 bg-slate-100 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-xl transition-all"><Trash2 size={14} /></button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              <div className="p-6 bg-slate-50/50 border-t border-slate-100 flex justify-center">
+                <button 
+                  onClick={handleAddStep}
+                  className="flex items-center gap-3 px-8 py-3 bg-white border border-slate-200 text-[10px] font-black uppercase tracking-[0.15em] text-slate-500 hover:text-indigo-600 hover:border-indigo-200 hover:shadow-md rounded-2xl transition-all active:scale-95"
+                >
+                  <Plus size={16} /> Insert Operational Checkpoint
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Footer */}
+          <div className="px-10 py-8 bg-white border-t border-slate-100 flex justify-between items-center shrink-0 shadow-[0_-10px_30px_rgba(0,0,0,0.02)]">
+            <div className="flex items-center gap-4">
+              <div className="w-3 h-3 rounded-full bg-emerald-500 shadow-[0_0_15px_rgba(16,185,129,0.5)]"></div>
+              <div>
+                <span className="text-[10px] font-black text-slate-900 uppercase tracking-[0.2em] block">Procedural Release v4.0</span>
+                <span className="text-[9px] font-bold text-slate-400 uppercase tracking-widest">Standards Complaince SAE JA1011</span>
+              </div>
+            </div>
+            <div className="flex gap-6">
+               <button 
+                 onClick={() => handleGenerateSingleSheet(item)}
+                 disabled={isRegenerating}
+                 className="flex items-center gap-3 px-8 py-4 bg-indigo-50 text-indigo-600 rounded-[1.2rem] text-[10px] font-black uppercase tracking-[0.15em] hover:bg-indigo-100 transition-all active:scale-95 shadow-inner disabled:opacity-50"
+               >
+                 <RefreshCw size={16} className={isRegenerating ? "animate-spin" : ""} /> {isRegenerating ? "Synthesizing..." : "Regenerate Inspection Protocol"}
+               </button>
+               <button 
+                 onClick={() => setViewSheet(null)}
+                 className="px-14 py-4 bg-slate-900 text-white rounded-[1.2rem] text-[10px] font-black uppercase tracking-[0.2em] hover:bg-indigo-600 transition-all shadow-2xl shadow-slate-200 active:scale-95"
+               >
+                 Confirm Protocol
+               </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    );
   };
 
   const renderComponentIntelModal = () => {
@@ -451,15 +645,15 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
     
     return (
       <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 border border-slate-100">
-          <div className="bg-slate-900 px-8 py-6 flex justify-between items-center text-white shrink-0">
+        <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col animate-in zoom-in-95 duration-200 border border-slate-100">
+          <div className="bg-slate-900 px-6 py-5 flex justify-between items-center text-white shrink-0">
             <div className="flex items-center gap-4">
-              <div className="p-3 bg-indigo-500/20 rounded-2xl border border-indigo-500/30">
+              <div className="p-3 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
                 <Info size={24} className="text-indigo-200" />
               </div>
               <div>
-                <h3 className="font-black text-xl leading-none uppercase tracking-tight">{selectedIntel.component}</h3>
-                <p className="text-[10px] text-slate-400 mt-1.5 uppercase tracking-widest font-bold">Physical Component Intel</p>
+                <h3 className="font-black text-lg tracking-tighter uppercase leading-none">Asset Architecture</h3>
+                <p className="text-[10px] text-indigo-400 font-black uppercase tracking-widest mt-1">{selectedIntel.component}</p>
               </div>
             </div>
             <div className="flex items-center gap-2">
@@ -467,261 +661,61 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
                 onClick={handleInternalUndo}
                 disabled={!canUndo}
                 className={`p-2 rounded-full transition-all ${
-                  canUndo ? 'hover:bg-white/10 text-white' : 'text-slate-600 opacity-20'
-                }`}
-                title="Undo last action"
-              >
-                <Undo2 size={24} />
-              </button>
-              <button onClick={() => setSelectedIntel(null)} className="hover:bg-white/10 p-2 rounded-full transition-colors">
-                <X size={24} />
-              </button>
-            </div>
-          </div>
-          
-          <div className="p-8 space-y-8 bg-slate-50/30">
-            <div className="space-y-3">
-              <div className="flex items-center gap-2 text-indigo-600">
-                <FileText size={18} />
-                <h4 className="text-xs font-black uppercase tracking-widest">Description</h4>
-              </div>
-              <p className="text-sm text-slate-700 leading-relaxed font-medium bg-white p-4 rounded-2xl border border-slate-100 shadow-sm italic">
-                {intel?.description || "No description provided."}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-amber-600">
-                  <MapPin size={18} />
-                  <h4 className="text-xs font-black uppercase tracking-widest">Location</h4>
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed font-semibold bg-white p-4 rounded-2xl border border-slate-100 shadow-sm min-h-[80px]">
-                  {intel?.location || "Location context unavailable."}
-                </p>
-              </div>
-              <div className="space-y-3">
-                <div className="flex items-center gap-2 text-emerald-600">
-                  <Eye size={18} />
-                  <h4 className="text-xs font-black uppercase tracking-widest">Visual Cues</h4>
-                </div>
-                <p className="text-xs text-slate-600 leading-relaxed font-semibold bg-white p-4 rounded-2xl border border-slate-100 shadow-sm min-h-[80px]">
-                  {intel?.visualCues || "Identification cues not defined."}
-                </p>
-              </div>
-            </div>
-          </div>
-
-          <div className="px-8 py-6 bg-white border-t border-slate-50 flex justify-end">
-             <button 
-               onClick={() => setSelectedIntel(null)}
-               className="px-8 py-3 bg-slate-900 text-white rounded-xl text-xs font-black uppercase tracking-widest hover:bg-indigo-600 transition-all shadow-lg active:scale-95"
-             >
-               Understood
-             </button>
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  const renderInspectionSheet = () => {
-    if (!viewSheet || !viewSheet.item.inspectionSheet) return null;
-    const { item } = viewSheet;
-    const sheet = item.inspectionSheet;
-    const taskImage = getTaskImage(item.maintenanceTask);
-    const steps = sheet.steps || [];
-
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-4 transition-all">
-        <div className="bg-white rounded-xl shadow-2xl w-full max-w-7xl h-[90vh] flex flex-col animate-in zoom-in-95 duration-200">
-          <div className="bg-slate-900 px-8 py-5 flex justify-between items-center text-white shrink-0 rounded-t-xl">
-            <div className="flex items-center gap-4">
-              <div className="p-2.5 bg-indigo-500/20 rounded-xl border border-indigo-500/30">
-                 <ClipboardList size={24} className="text-indigo-200" />
-              </div>
-              <div>
-                <h3 className="font-bold text-xl leading-tight">Maintenance Inspection Procedure</h3>
-                <p className="text-sm text-slate-400 font-mono mt-0.5">{item.component} • {item.id.split('-').pop()?.toUpperCase()}</p>
-              </div>
-            </div>
-            <div className="flex items-center gap-3">
-              <button
-                onClick={handleInternalUndo}
-                disabled={!canUndo}
-                className={`p-2.5 rounded-xl transition-all ${
                   canUndo ? 'bg-white/10 text-white hover:bg-white/20' : 'text-slate-600 opacity-20'
                 }`}
                 title="Undo last action"
               >
-                <Undo2 size={24} />
+                <Undo2 size={20} />
               </button>
-              <button onClick={() => setViewSheet(null)} className="hover:bg-white/10 p-2 rounded-full transition-colors">
-                <X size={24} />
+              <button onClick={() => setSelectedIntel(null)} className="p-2 bg-white/5 text-slate-400 hover:bg-white/10 hover:text-white rounded-full transition-all">
+                <X size={20} />
               </button>
             </div>
           </div>
           
-          <div className="flex-1 overflow-y-auto custom-scrollbar bg-slate-50 p-8">
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-              <div className="bg-white rounded-xl border border-slate-200 shadow-sm col-span-1 lg:col-span-2 flex flex-col sm:flex-row overflow-hidden group">
-                 <div className="w-full sm:w-1/3 relative h-48 sm:h-auto overflow-hidden bg-slate-200">
-                    <img src={taskImage} alt={item.maintenanceTask} className="absolute inset-0 w-full h-full object-cover transition-transform duration-700 group-hover:scale-110" />
-                    <div className="absolute inset-0 bg-gradient-to-t from-slate-900/60 to-transparent sm:bg-indigo-900/10 sm:group-hover:bg-transparent transition-colors"></div>
-                    <div className="absolute top-3 left-3 bg-white/95 backdrop-blur-md px-2.5 py-1 rounded-md text-[10px] font-bold uppercase tracking-wider text-slate-800 shadow-sm border border-slate-100">{item.taskType}</div>
-                 </div>
-                 <div className="flex-1 p-6 flex flex-col justify-between">
-                    <div>
-                        <div className="flex items-start justify-between mb-2">
-                           <div>
-                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Target Failure Mode</span>
-                                <h4 className="text-lg font-bold text-slate-800 leading-snug mt-1">{item.failureMode}</h4>
-                                <div className="flex gap-2 mt-2">
-                                  <span className="text-[10px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200 flex items-center gap-1"><ShieldCheck size={10} /> {item.consequenceCategory}</span>
-                                  <span className="text-[10px] font-bold bg-indigo-50 text-indigo-600 px-2 py-0.5 rounded border border-indigo-100 flex items-center gap-1"><Tag size={10} /> {item.iso14224Code}</span>
-                                </div>
-                           </div>
-                        </div>
-                        <div className="mt-4">
-                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Maintenance Task</span>
-                           <p className="text-sm font-medium text-slate-700 bg-slate-50 p-3 rounded-lg border border-slate-100 leading-relaxed">{item.maintenanceTask}</p>
-                        </div>
-                    </div>
-                    <div className="mt-6 flex items-center gap-6 border-t border-slate-100 pt-4">
-                        <div>
-                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">Frequency</span>
-                           <span className="inline-flex items-center gap-1.5 text-sm font-bold text-indigo-600 bg-indigo-50 px-2 py-0.5 rounded"><Clock size={12} /> {item.interval}</span>
-                        </div>
-                        <div className="h-8 w-px bg-slate-100"></div>
-                        <div>
-                           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-0.5">Risk Level (RPN)</span>
-                           <span className={`text-sm font-bold flex items-center gap-1.5 ${getScoreColor(item.severity || 0)}`}><AlertOctagon size={14} /> {item.rpn}</span>
-                        </div>
-                    </div>
-                 </div>
+          <div className="p-6 space-y-6 bg-slate-50/30 overflow-y-auto custom-scrollbar flex-1 max-h-[75vh]">
+            <div className="space-y-3">
+              <div className="flex items-center gap-2 text-slate-900">
+                <FileText size={16} className="text-indigo-500" />
+                <h4 className="text-[10px] font-black uppercase tracking-widest">Technical Breakdown</h4>
               </div>
-
-              <div className="bg-white p-6 rounded-xl border border-slate-200 shadow-sm space-y-5 flex flex-col justify-center">
-                 <div className="flex items-start gap-3">
-                    <div className="p-2 bg-red-50 text-red-600 rounded-lg shrink-0"><ShieldAlert size={20} /></div>
-                    <div>
-                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Safety & PPE</span>
-                       <p className="text-xs text-slate-700 leading-relaxed font-medium">{sheet.safetyPrecautions || "Standard PPE required."}</p>
-                    </div>
-                 </div>
-                 <div className="w-full h-px bg-slate-100"></div>
-                 <div className="flex items-start gap-3">
-                    <div className="p-2 bg-amber-50 text-amber-600 rounded-lg shrink-0"><Wrench size={20} /></div>
-                    <div>
-                       <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block mb-1">Tools Required</span>
-                       <p className="text-xs text-slate-700 leading-relaxed font-medium">{sheet.toolsRequired || "Standard hand tools."}</p>
-                    </div>
-                 </div>
-                 <div className="w-full h-px bg-slate-100"></div>
-                 <div className="flex justify-between items-center text-xs pt-1">
-                    <div className="flex items-center gap-2 text-slate-500"><User size={14} /> <span>Resp: <strong className="text-slate-700">{sheet.responsibility}</strong></span></div>
-                    <div className="flex items-center gap-2 text-slate-500"><Clock size={14} /> <span>Est: <strong className="text-slate-700">{sheet.estimatedTime}</strong></span></div>
-                 </div>
+              <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm relative overflow-hidden group">
+                 <div className="absolute top-0 left-0 w-1.5 h-full bg-indigo-600/10 group-hover:bg-indigo-600 transition-colors"></div>
+                 <p className="text-sm text-slate-800 leading-relaxed font-bold tracking-tight">
+                   {intel?.description || "Engineering specs unavailable."}
+                 </p>
               </div>
             </div>
 
-            <div className="bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
-              <div className="px-6 py-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-                 <h4 className="font-bold text-slate-800 flex items-center gap-2">
-                    <Search size={18} className="text-slate-400" />
-                    Inspection Procedure Steps
-                 </h4>
-                 <div className="flex items-center gap-3">
-                    <button 
-                      onClick={handleAddStep}
-                      className="text-xs font-bold text-indigo-600 hover:text-indigo-700 flex items-center gap-1.5 px-3 py-1.5 bg-indigo-50 rounded-md border border-indigo-100 transition-colors"
-                    >
-                      <Plus size={14} /> Add Step
-                    </button>
-                    <span className="text-xs font-medium text-slate-500 bg-white px-2 py-1 rounded border border-slate-200 shadow-sm">{steps.length} Steps</span>
-                 </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-6">
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-amber-600">
+                  <MapPin size={16} />
+                  <h4 className="text-[10px] font-black uppercase tracking-widest">Location</h4>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                   <p className="text-xs text-slate-700 font-black uppercase tracking-tight leading-relaxed">{intel?.location || "N/A"}</p>
+                </div>
               </div>
-              <table className="w-full text-left text-sm">
-                <thead className="bg-slate-50/50 text-slate-500 font-bold text-xs uppercase tracking-wider border-b border-slate-200">
-                  <tr>
-                    <th className="px-6 py-4 w-16 text-center">#</th>
-                    <th className="px-6 py-4 w-[40%]">Action / Description</th>
-                    <th className="px-6 py-4 w-[15%]">Method</th>
-                    <th className="px-6 py-4 w-[25%]">Acceptance Criteria</th>
-                    <th className="px-6 py-4 text-center">Actions</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100">
-                  {steps.map((step, idx) => {
-                    const isStepEditing = editingStepIdx === idx;
-                    return (
-                      <tr key={idx} className="hover:bg-slate-50/80 transition-colors group">
-                        <td className="px-6 py-5 text-center align-top">
-                          <span className="inline-flex items-center justify-center w-6 h-6 rounded-full bg-slate-100 text-slate-500 font-bold text-xs group-hover:bg-indigo-100 group-hover:text-indigo-600 transition-colors">{step.step}</span>
-                        </td>
-                        <td className="px-6 py-5 align-top">
-                          {isStepEditing ? (
-                            <textarea 
-                              value={step.description} 
-                              onChange={(e) => handleUpdateStepField(idx, 'description', e.target.value)}
-                              className="w-full p-2 text-sm border border-indigo-300 rounded focus:ring-2 focus:ring-indigo-500 outline-none min-h-[80px]"
-                            />
-                          ) : (
-                            <p className="text-slate-800 font-medium text-base leading-relaxed">{step.description}</p>
-                          )}
-                        </td>
-                        <td className="px-6 py-5 align-top">
-                          {isStepEditing ? (
-                            <input 
-                              type="text" 
-                              value={step.technique} 
-                              onChange={(e) => handleUpdateStepField(idx, 'technique', e.target.value)}
-                              className="w-full p-1.5 text-xs border border-indigo-300 rounded outline-none"
-                            />
-                          ) : (
-                            <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-white border border-slate-200 text-xs font-medium text-slate-600 shadow-sm">
-                              <Activity size={12} className="text-indigo-400" />
-                              {step.technique}
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-6 py-5 align-top">
-                          {isStepEditing ? (
-                            <textarea 
-                              value={step.criteria} 
-                              onChange={(e) => handleUpdateStepField(idx, 'criteria', e.target.value)}
-                              className="w-full p-2 text-xs border border-indigo-300 rounded outline-none min-h-[60px]"
-                            />
-                          ) : (
-                            <div className="flex items-start gap-2 text-emerald-700 bg-emerald-50/50 p-2 rounded-lg border border-emerald-100/50">
-                               <CheckCircle size={14} className="mt-0.5 shrink-0" />
-                               <span className="text-sm font-medium">{step.criteria}</span>
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-6 py-5 align-middle text-center">
-                           <div className="flex items-center justify-center gap-2">
-                              {isStepEditing ? (
-                                <button onClick={() => setEditingStepIdx(null)} className="p-2 bg-emerald-500 text-white rounded-md shadow hover:bg-emerald-600 transition-colors" title="Save Step"><CheckCircle size={16} /></button>
-                              ) : (
-                                <>
-                                  <button onClick={() => setEditingStepIdx(idx)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors" title="Edit Step"><Pencil size={14} /></button>
-                                  <button onClick={() => handleDeleteStep(idx)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-md transition-colors" title="Delete Step"><Trash2 size={14} /></button>
-                                  <div className="w-6 h-6 border-2 border-slate-300 rounded bg-white cursor-pointer hover:border-indigo-500 transition-colors ml-1"></div>
-                                </>
-                              )}
-                           </div>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-emerald-600">
+                  <Eye size={16} />
+                  <h4 className="text-[10px] font-black uppercase tracking-widest">Indicators</h4>
+                </div>
+                <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm">
+                   <p className="text-xs text-slate-700 font-black uppercase tracking-tight leading-relaxed">{intel?.visualCues || "N/A"}</p>
+                </div>
+              </div>
             </div>
           </div>
-          <div className="bg-white px-8 py-5 flex justify-between shrink-0 border-t border-slate-200 rounded-b-xl shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-10">
-             <button onClick={() => alert("Print Dialog would open here.")} className="flex items-center gap-2 px-5 py-2.5 bg-white border border-slate-300 text-slate-700 rounded-lg text-sm font-bold hover:bg-slate-50 hover:text-slate-900 transition-colors shadow-sm"><Printer size={18} /> Print Sheet</button>
-             <button onClick={() => setViewSheet(null)} className="px-8 py-2.5 bg-slate-900 text-white rounded-lg text-sm font-bold hover:bg-slate-800 transition-colors shadow-lg shadow-slate-200 hover:-translate-y-0.5">Close Procedure</button>
+
+          <div className="px-6 py-4 bg-white border-t border-slate-100 flex justify-end shrink-0">
+             <button 
+               onClick={() => setSelectedIntel(null)}
+               className="px-10 py-3 bg-slate-900 text-white rounded-xl text-[10px] font-black uppercase tracking-widest hover:bg-indigo-600 transition-all active:scale-95 shadow-lg shadow-slate-200"
+             >
+               Exit Spec
+             </button>
           </div>
         </div>
       </div>
@@ -743,6 +737,14 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
     <div className="space-y-8 animate-fade-in relative w-full">
       {renderInspectionSheet()}
       {renderComponentIntelModal()}
+      {optimizingItem && (
+        <IntervalOptimizerModal 
+          item={optimizingItem} 
+          isOpen={!!optimizingItem} 
+          onClose={() => setOptimizingItem(null)} 
+          onApply={handleApplyOptimizedInterval}
+        />
+      )}
 
       <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4">
         {stats.map((stat, i) => (
@@ -837,6 +839,15 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
         <div className="p-6 border-b border-slate-200 flex flex-col xl:flex-row justify-between items-center gap-4 bg-slate-50/50">
           <div className="flex items-center gap-3"><div className="p-2 bg-indigo-600 rounded-lg shadow-sm"><FileText size={20} className="text-white" /></div><div><h3 className="text-lg font-bold text-slate-800">FMECA Analysis Details</h3><p className="text-xs text-slate-500">SAE JA1011 & ISO 14224 Compliant Analysis</p></div></div>
           <div className="flex flex-wrap justify-center items-center gap-3">
+            <button 
+              onClick={() => requestSort('status_color')} 
+              className={`flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all border shadow-sm ${sortConfig.key === 'status_color' ? 'bg-indigo-50 text-indigo-700 border-indigo-200' : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'}`}
+              title="Sort by New Status & Risk Level"
+            >
+              <Palette size={16} />
+              {sortConfig.key === 'status_color' ? "Grouped by Color" : "Sort by Status/Color"}
+            </button>
+            <button onClick={handleGenerateMissingIntel} disabled={generatingIntel} className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all border shadow-sm ${generatingIntel ? 'bg-amber-50 text-amber-400 border-amber-100 cursor-wait' : 'bg-amber-600 text-white border-amber-600 hover:bg-amber-700 hover:shadow-md hover:-translate-y-0.5'}`}>{generatingIntel ? <Loader2 size={16} className="animate-spin" /> : <Box size={16} />}{generatingIntel ? `Synthesizing Intel ${progress.current}/${progress.total}` : "Refine Metadata"}</button>
             <button onClick={handleGenerateAllSheets} disabled={generatingSheets} className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all border shadow-sm ${generatingSheets ? 'bg-indigo-50 text-indigo-400 border-indigo-100 cursor-wait' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700 hover:shadow-md hover:-translate-y-0.5'}`}>{generatingSheets ? <Loader2 size={16} className="animate-spin" /> : <ClipboardList size={16} />}{generatingSheets ? `Generating ${progress.current}/${progress.total}` : "Generate Sheets"}</button>
             <button onClick={handleCopy} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-white hover:bg-slate-50 rounded-lg transition-colors border border-slate-200 shadow-sm">{copied ? <CheckCircle size={16} className="text-green-600" /> : <Copy size={16} />}{copied ? "Copied!" : "Excel Flat Copy"}</button>
             <button onClick={handleClassicalCopy} className="flex items-center gap-2 px-3 py-2 text-sm font-medium text-slate-700 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 rounded-lg transition-colors border border-indigo-200 shadow-sm">{classicalCopied ? <CheckCircle size={16} className="text-indigo-600" /> : <LayoutList size={16} />}{classicalCopied ? "Sheet Copied!" : "Classical Decision Copy"}</button>
@@ -911,8 +922,9 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
                   }
                   const rpn = item.rpn || 0; const rpnStyle = getRPNColorStyle(rpn);
                   const consCat = item.consequenceCategory || '';
+                  const isNew = item.isNew === true;
                   return (
-                    <tr key={item.id} className={`group hover:bg-slate-50 ${isRegenerating ? 'opacity-60 bg-slate-50' : ''} ${barFilter === item.id ? 'bg-indigo-50/50' : ''}`}>
+                    <tr key={item.id} className={`group hover:bg-slate-50 ${isRegenerating ? 'opacity-60 bg-slate-50' : ''} ${barFilter === item.id ? 'bg-indigo-50/50' : ''} ${isNew ? 'bg-emerald-50/60 transition-colors' : ''}`}>
                       <td className="px-6 py-4 font-medium align-top leading-tight text-xs">
                         <div className="flex items-center gap-2">
                            <span className="flex-1">{item.component}</span>
@@ -934,7 +946,16 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, onUpdate, 
                       <td className="px-2 py-4 align-middle text-center"><span className={getScoreColor(item.occurrence || 0)}>{item.occurrence || 0}</span></td>
                       <td className="px-2 py-4 align-middle text-center"><span className={getScoreColor(item.detection || 0)}>{item.detection || 0}</span></td>
                       <td className="px-4 py-4 align-middle border-r"><div className="flex flex-col gap-1"><span className={`text-xs font-bold ${rpnStyle.text}`}>{rpn}</span><div className="w-full h-1 bg-slate-100 rounded-full overflow-hidden"><div className={`h-full ${rpnStyle.bar}`} style={{width: `${Math.min((rpn/400)*100, 100)}%`}}></div></div></div></td>
-                      <td className="px-6 py-4 align-top"><div className="font-medium text-xs leading-tight">{item.maintenanceTask}</div><div className="text-[10px] text-slate-400 font-mono mt-1">{item.interval}</div></td>
+                      <td className="px-6 py-4 align-top group/interval">
+                        <div className="font-medium text-xs leading-tight">{item.maintenanceTask}</div>
+                        <button 
+                          onClick={() => setOptimizingItem(item)}
+                          className="text-[10px] text-slate-400 font-mono mt-1 hover:text-indigo-600 hover:bg-indigo-50 px-1.5 py-0.5 rounded transition-all flex items-center gap-1 group-hover/interval:border group-hover/interval:border-indigo-100"
+                        >
+                          <Target size={10} className="opacity-0 group-hover/interval:opacity-100" />
+                          {item.interval}
+                        </button>
+                      </td>
                       <td className="px-6 py-4 align-middle text-center">
                          {isRegenerating ? <RefreshCw size={20} className="animate-spin text-indigo-500 mx-auto" /> : item.inspectionSheet ? <button onClick={() => setViewSheet({ item })} className="text-emerald-500 hover:scale-110 transition-transform"><FileCheck size={22} /></button> : <button onClick={() => handleGenerateSingleSheet(item)} className="text-slate-300 hover:text-indigo-500"><File size={22} /></button>}
                       </td>

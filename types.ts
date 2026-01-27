@@ -51,9 +51,11 @@ export interface RCMItem {
 
   maintenanceTask: string;
   interval: string;
+  pfInterval?: string; // New field for reliability optimization
   taskType: 'Condition Monitoring' | 'Time-Based' | 'Run-to-Failure' | 'Redesign' | 'Failure Finding' | 'Lubrication' | 'Servicing' | 'Restoration' | 'Replacement';
   inspectionSheet?: InspectionSheet;
   componentIntel?: ComponentIntel;
+  isNew?: boolean;
 }
 
 export interface AnalysisStats {

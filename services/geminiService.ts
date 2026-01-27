@@ -1,9 +1,9 @@
 
-import { GoogleGenAI, Type, Schema } from "@google/genai";
-import { RCMItem, FileData, InspectionSheet } from "../types";
+import { GoogleGenAI, Type } from "@google/genai";
+import { RCMItem, FileData, InspectionSheet, ComponentIntel } from "../types";
 
 // Define the expected output schema for structured JSON
-const rcmSchema: Schema = {
+const rcmSchema = {
   type: Type.ARRAY,
   items: {
     type: Type.OBJECT,
@@ -15,7 +15,10 @@ const rcmSchema: Schema = {
       componentIntel: {
         type: Type.OBJECT,
         properties: {
-          description: { type: Type.STRING, description: "Plain-English explanation of what this part is." },
+          description: { 
+            type: Type.STRING, 
+            description: "A concise technical physical description (2-3 sentences). Detail metallurgy and construction. DO NOT use double quotes or mention images." 
+          },
           location: { type: Type.STRING, description: "Where it is typically found on the asset." },
           visualCues: { type: Type.STRING, description: "What to look for (colors, shapes, textures) to identify it." }
         },
@@ -97,7 +100,7 @@ const rcmSchema: Schema = {
   }
 };
 
-const inspectionSchema: Schema = {
+const inspectionSchema = {
   type: Type.OBJECT,
   properties: {
     responsibility: { type: Type.STRING },
@@ -121,9 +124,23 @@ const inspectionSchema: Schema = {
   required: ["responsibility", "estimatedTime", "safetyPrecautions", "toolsRequired", "steps"]
 };
 
+const componentIntelSchema = {
+  type: Type.OBJECT,
+  properties: {
+    description: { 
+      type: Type.STRING, 
+      description: "A concise technical physical description (2-3 sentences). Detail metallurgy and construction. DO NOT use double quotes." 
+    },
+    location: { type: Type.STRING, description: "Where it is typically found on the asset." },
+    visualCues: { type: Type.STRING, description: "What to look for (colors, shapes, textures) to identify it." }
+  },
+  required: ["description", "location", "visualCues"]
+};
+
 export const generateRCMAnalysis = async (
   contextText: string,
-  fileData: FileData | null
+  fileData: FileData | null,
+  existingItems: RCMItem[] = []
 ): Promise<RCMItem[]> => {
   try {
     const apiKey = process.env.API_KEY;
@@ -143,20 +160,27 @@ export const generateRCMAnalysis = async (
       parts.push({ text: `Operational Context:\n${contextText}` });
     }
 
+    let avoidanceInstruction = "";
+    if (existingItems.length > 0) {
+      const existingSummary = existingItems.map(i => `${i.component} (${i.failureMode})`).join(", ");
+      avoidanceInstruction = `\n\nIMPORTANT: Avoid duplicating these existing failure modes already analyzed: ${existingSummary}. Focus on discovering ADDITIONAL or missed failure mechanisms and components within the Level 4 scope.`;
+    }
+
     parts.push({
-      text: `Perform a COMPREHENSIVE and RIGOROUS RCM/FMECA study. 
+      text: `Perform a COMPREHENSIVE and RIGOROUS RCM/FMECA study. ${avoidanceInstruction}
       
       ANALYSIS SCOPE:
-      - Target Volume: Generate approximately 30-35 distinct failure mode items.
-      - Component Level: Level 3 or 4 (e.g. 'Drive Motor', 'Main Coupling', 'Discharge Valve'). Do not be too granular (screws) or too broad (the whole machine).
+      - Target Volume: Generate approximately ${existingItems.length > 0 ? '10-15 NEW' : '30-35'} distinct failure mode items.
+      - Component Level: Level 3 or 4 (e.g. 'Drive Motor', 'Main Coupling', 'Discharge Valve').
 
       COMPONENT INTEL MANDATE:
-      - For every component, provide a layman physical description, typical location, and visual identification cues.
+      - Provide a concise technical physical description for every component (2-3 sentences).
+      - Detail materials and primary construction.
+      - DO NOT mention anything about "sketches", "images", or "drawings".
+      - DO NOT use double quotes in your text response.
 
       RISK SCORING (RPN):
       - We require realistic industrial risk assessment. 
-      - SEVERITY: If a failure stops production or risks injury, use 8-10.
-      - DETECTION: If internal, use 8-10.
       - Aim for RPNs that clearly highlight criticalities (range of 150-500).
 
       Compliance: SAE JA1011 and ISO 14224.`
@@ -170,11 +194,12 @@ export const generateRCMAnalysis = async (
         responseSchema: rcmSchema,
         seed: 42, 
         thinkingConfig: { thinkingBudget: 24000 },
-        systemInstruction: `You are a Senior Maintenance Engineer. You provide professional, comprehensive RCM reports that strike a balance between high-level summaries and exhaustive audits. Your risk assessments are realistic and favor safety/availability.`
+        systemInstruction: `You are a Senior Maintenance Engineer. You provide professional, comprehensive RCM reports. Your component descriptions are strictly concise technical physical breakdowns. You never include meta-commentary or disclaimers about image generation capabilities. You never use double quotes in descriptions.`
       }
     });
 
-    const rawData = JSON.parse(response.text || "[]") as Omit<RCMItem, 'id' | 'rpn'>[];
+    const responseText = response.text || "[]";
+    const rawData = JSON.parse(responseText) as Omit<RCMItem, 'id' | 'rpn'>[];
     
     return rawData.map((item, index) => {
       const s = item.severity || 8;
@@ -186,7 +211,8 @@ export const generateRCMAnalysis = async (
         occurrence: o,
         detection: d,
         rpn: s * o * d,
-        id: `rcm-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}` 
+        id: `rcm-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
+        isNew: true
       };
     });
 
@@ -203,7 +229,7 @@ export const generateInspectionSheet = async (item: RCMItem): Promise<Inspection
     const ai = new GoogleGenAI({ apiKey });
 
     const prompt = `Create a technical inspection procedure for: ${item.maintenanceTask} on ${item.component}.
-    Ensure 5 clear technical steps with pass/fail criteria.`;
+    Ensure 5 clear technical steps with pass/fail criteria. The 'technique' or 'method' field MUST be extremely short (1-2 words only). DO NOT use double quotes in the response text.`;
 
     const response = await ai.models.generateContent({
       model: "gemini-3-flash-preview",
@@ -213,13 +239,86 @@ export const generateInspectionSheet = async (item: RCMItem): Promise<Inspection
         responseSchema: inspectionSchema,
         seed: 42,
         thinkingConfig: { thinkingBudget: 4000 },
-        systemInstruction: "Technical Procedure Author. Professional and actionable."
+        systemInstruction: "Technical Procedure Author. Your task is to produce strictly actionable maintenance steps. You favor brevity in the 'technique' field and never use double quotes."
       }
     });
 
     return JSON.parse(response.text || "{}") as InspectionSheet;
   } catch (error) {
     console.error("Inspection Sheet Error", error);
+    throw error;
+  }
+};
+
+export const generateComponentIntel = async (componentName: string): Promise<ComponentIntel> => {
+  try {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) throw new Error("API_KEY not set");
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt = `Provide concise technical physical intelligence for the component: ${componentName}.
+    Include a technical description (metallurgy/construction, 2-3 sentences), typical location on an industrial asset, and visual identification cues. DO NOT use double quotes.`;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: { parts: [{ text: prompt }] },
+      config: {
+        responseMimeType: "application/json",
+        responseSchema: componentIntelSchema,
+        seed: 42,
+        thinkingConfig: { thinkingBudget: 4000 },
+        systemInstruction: "Senior Maintenance Engineer. You provide professional, concise technical physical breakdowns for industrial components. You never use double quotes."
+      }
+    });
+
+    return JSON.parse(response.text || "{}") as ComponentIntel;
+  } catch (error) {
+    console.error("Component Intel Error", error);
+    throw error;
+  }
+};
+
+export const extractOperationalContext = async (fileData: FileData): Promise<string> => {
+  try {
+    const apiKey = process.env.API_KEY;
+    if (!apiKey) throw new Error("API_KEY not set");
+    const ai = new GoogleGenAI({ apiKey });
+
+    const prompt = `
+      TASK:
+      Analyze the attached technical document and extract a comprehensive RCM "Operational Context" draft according to SAE JA1011 standards. 
+
+      STRUCTURE THE OUTPUT INTO THESE SECTIONS (CAPITALIZED):
+      1. SYSTEM BOUNDARIES: List main components and boundaries.
+      2. FUNCTIONAL REQUIREMENTS: Primary and secondary functions.
+      3. OPERATING CONDITIONS: Environment, duty cycle, etc.
+      4. FAILURE MECHANISMS: Likely wear/failure modes mentioned or implied.
+      5. MAINTENANCE INTENT: The strategic goal for this asset.
+
+      FORMATTING:
+      - Plain text only.
+      - Use clear section headers.
+      - Use bullet points (-).
+      - No markdown symbols like # or **.
+      - DO NOT use double quotes in the text.
+    `;
+
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: {
+        parts: [
+          { inlineData: { mimeType: fileData.mimeType, data: fileData.data } },
+          { text: prompt }
+        ]
+      },
+      config: {
+        systemInstruction: "You are a Senior Reliability Analyst. You read technical documentation and synthesize structured SAE JA1011 Operational Context drafts."
+      }
+    });
+
+    return response.text || "No operational context could be extracted.";
+  } catch (error) {
+    console.error("Context Extraction Error:", error);
     throw error;
   }
 };
