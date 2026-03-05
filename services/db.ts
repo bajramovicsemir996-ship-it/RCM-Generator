@@ -1,8 +1,10 @@
-import { SavedStudy } from '../types';
+
+import { SavedStudy, Folder } from '../types';
 
 const DB_NAME = 'RCM_Generator_DB';
 const STORE_NAME = 'studies';
-const DB_VERSION = 1;
+const FOLDER_STORE = 'folders';
+const DB_VERSION = 2;
 
 // Initialize the database
 const initDB = (): Promise<IDBDatabase> => {
@@ -16,6 +18,9 @@ const initDB = (): Promise<IDBDatabase> => {
       const db = (event.target as IDBOpenDBRequest).result;
       if (!db.objectStoreNames.contains(STORE_NAME)) {
         db.createObjectStore(STORE_NAME, { keyPath: 'id' });
+      }
+      if (!db.objectStoreNames.contains(FOLDER_STORE)) {
+        db.createObjectStore(FOLDER_STORE, { keyPath: 'id' });
       }
     };
   });
@@ -62,6 +67,51 @@ export const deleteStudyFromDB = async (id: string): Promise<void> => {
   return new Promise((resolve, reject) => {
     const transaction = db.transaction(STORE_NAME, 'readwrite');
     const store = transaction.objectStore(STORE_NAME);
+    const request = store.delete(id);
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+};
+
+// Folders Logic
+export const getAllFolders = async (): Promise<Folder[]> => {
+  try {
+    const db = await initDB();
+    return new Promise((resolve, reject) => {
+      const transaction = db.transaction(FOLDER_STORE, 'readonly');
+      const store = transaction.objectStore(FOLDER_STORE);
+      const request = store.getAll();
+
+      request.onsuccess = () => {
+        const results = request.result as Folder[];
+        resolve(results.sort((a, b) => b.timestamp - a.timestamp));
+      };
+      request.onerror = () => reject(request.error);
+    });
+  } catch (e) {
+    console.error("DB Error:", e);
+    return [];
+  }
+};
+
+export const saveFolderToDB = async (folder: Folder): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(FOLDER_STORE, 'readwrite');
+    const store = transaction.objectStore(FOLDER_STORE);
+    const request = store.put(folder);
+
+    request.onsuccess = () => resolve();
+    request.onerror = () => reject(request.error);
+  });
+};
+
+export const deleteFolderFromDB = async (id: string): Promise<void> => {
+  const db = await initDB();
+  return new Promise((resolve, reject) => {
+    const transaction = db.transaction(FOLDER_STORE, 'readwrite');
+    const store = transaction.objectStore(FOLDER_STORE);
     const request = store.delete(id);
 
     request.onsuccess = () => resolve();

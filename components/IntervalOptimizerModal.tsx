@@ -169,7 +169,8 @@ export const IntervalOptimizerModal: React.FC<IntervalOptimizerModalProps> = ({ 
     setIsLoading(true);
 
     try {
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+      // Fix: Initialize GoogleGenAI strictly using process.env.API_KEY
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const prompt = `
         FAILURE MODE CONTEXT:
@@ -196,6 +197,8 @@ export const IntervalOptimizerModal: React.FC<IntervalOptimizerModalProps> = ({ 
         model: 'gemini-3-flash-preview',
         contents: [{ role: 'user', parts: [{ text: prompt }] }],
         config: {
+          temperature: 0.4,
+          seed: 42,
           systemInstruction: "You are an RCM Interval Optimization Engine. You use technical lead times and reliability statistics to calculate effective maintenance frequencies. You avoid all markdown formatting, bolding, and special characters in your output."
         }
       });
@@ -292,7 +295,7 @@ export const IntervalOptimizerModal: React.FC<IntervalOptimizerModalProps> = ({ 
                  <div className="space-y-4">
                     <div className="flex justify-between items-end">
                       <div>
-                        <span className="text-[10px] font-bold text-slate-500 uppercase block">Current</span>
+                        <span className="text-[10px] font-bold text-slate-500 uppercase block mb-1">Current</span>
                         <span className="text-sm font-black text-slate-400">{item.interval}</span>
                       </div>
                       <ArrowRight size={14} className="text-slate-700 mb-1" />

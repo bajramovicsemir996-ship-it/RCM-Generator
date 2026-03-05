@@ -35,6 +35,8 @@ export type ConsequenceCategory =
 export interface RCMItem {
   id: string;
   component: string;
+  componentType: 'Electrical' | 'Mechanical';
+  functionType: 'Primary' | 'Secondary';
   function: string;
   functionalFailure: string;
   failureMode: string;
@@ -52,10 +54,13 @@ export interface RCMItem {
   maintenanceTask: string;
   interval: string;
   pfInterval?: string; // New field for reliability optimization
-  taskType: 'Condition Monitoring' | 'Time-Based' | 'Run-to-Failure' | 'Redesign' | 'Failure Finding' | 'Lubrication' | 'Servicing' | 'Restoration' | 'Replacement';
+  taskType: 'Condition Monitoring' | 'Time-Based' | 'Run-to-Failure' | 'Redesign' | 'Failure Finding' | 'Lubrication' | 'Servicing' | 'Restoration' | 'Replacement' | 'Training' | 'Procedural Change';
   inspectionSheet?: InspectionSheet;
   componentIntel?: ComponentIntel;
   isNew?: boolean;
+  isMiraGenerated?: boolean;
+  isApproved?: boolean;
+  validationIssues?: string[];
 }
 
 export interface AnalysisStats {
@@ -73,11 +78,20 @@ export interface FileData {
   data: string;
 }
 
+export interface Folder {
+  id: string;
+  name: string;
+  timestamp: number;
+}
+
 export interface SavedStudy {
   id: string;
   name: string;
   timestamp: number;
   items: RCMItem[];
   contextText: string;
+  language?: string;
   fileName?: string;
+  folderId?: string;
+  isFinished?: boolean;
 }
