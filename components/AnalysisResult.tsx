@@ -216,6 +216,35 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
     onUpdate(newData);
   };
 
+  const handleAddRow = () => {
+    const newId = `rcm-${Date.now()}`;
+    const newItem: RCMItem = {
+      id: newId,
+      component: 'New Component',
+      componentType: 'Mechanical',
+      functionType: 'Primary',
+      function: 'Function description...',
+      functionalFailure: 'Functional failure...',
+      failureMode: 'Failure mode...',
+      failureEffect: 'Failure effect...',
+      criticality: 'Low',
+      consequenceCategory: 'Evident - Operational',
+      iso14224Code: '',
+      severity: 1,
+      occurrence: 1,
+      detection: 1,
+      rpn: 1,
+      maintenanceTask: 'Proposed task...',
+      interval: 'Monthly',
+      taskType: 'Time-Based',
+      isNew: true
+    };
+    
+    onUpdate([...data, newItem]);
+    setEditingId(newId);
+    setEditForm(newItem);
+  };
+
   const handleEdit = (item: RCMItem) => {
     setEditingId(item.id);
     setEditForm({ ...item });
@@ -1230,6 +1259,14 @@ export const AnalysisResult: React.FC<AnalysisResultProps> = ({ data, studyName,
             >
               <Palette size={16} />
               {sortConfig.key === 'status_color' ? "Grouped by Color" : "Sort by Status/Color"}
+            </button>
+            <button 
+              onClick={handleAddRow}
+              className="flex items-center gap-2 px-3 py-2 text-sm font-medium rounded-lg transition-all border shadow-sm bg-white text-slate-700 border-slate-200 hover:bg-slate-50"
+              title="Add New Row"
+            >
+              <Plus size={16} className="text-indigo-600" />
+              Add Row
             </button>
             <button onClick={handleGenerateAllSheets} disabled={generatingSheets} className={`flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-all border shadow-sm ${generatingSheets ? 'bg-indigo-50 text-indigo-400 border-indigo-100 cursor-wait' : 'bg-indigo-600 text-white border-indigo-600 hover:bg-indigo-700 hover:shadow-md hover:-translate-y-0.5'}`}>{generatingSheets ? <Loader2 size={16} className="animate-spin" /> : <ClipboardList size={16} />}{generatingSheets ? `Generating ${progress.current}/${progress.total}` : "Generate Sheets"}</button>
           </div>

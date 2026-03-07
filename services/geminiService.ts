@@ -356,7 +356,8 @@ export const translateRCMAnalysis = async (items: RCMItem[], targetLanguage: str
   const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
   
   // Batch processing to avoid token limits
-  const BATCH_SIZE = 10;
+  // Increased batch size to 20 for speed, Flash model has large context
+  const BATCH_SIZE = 20;
   const chunks = [];
   for (let i = 0; i < items.length; i += BATCH_SIZE) {
     chunks.push(items.slice(i, i + BATCH_SIZE));
@@ -396,7 +397,8 @@ export const translateRCMAnalysis = async (items: RCMItem[], targetLanguage: str
         config: {
           responseMimeType: "application/json",
           responseSchema: rcmSchema,
-          temperature: 0.1
+          temperature: 0.1,
+          thinkingConfig: { thinkingBudget: 0 } // Disable thinking for speed
         }
       });
 

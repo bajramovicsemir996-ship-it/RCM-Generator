@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { generateRCMAnalysis, extractOperationalContext, translateRCMAnalysis, translateContext } from './services/geminiService';
+import { generateRCMAnalysis, extractOperationalContext } from './services/geminiService';
 import { getAllStudies, saveStudyToDB, deleteStudyFromDB, getAllFolders, saveFolderToDB, deleteFolderFromDB } from './services/db';
 import { RCMItem, FileData, SavedStudy, Folder } from './types';
 import { AnalysisResult } from './components/AnalysisResult';
@@ -63,6 +63,7 @@ const App: React.FC = () => {
   const [isFinished, setIsFinished] = useState(false);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [justSaved, setJustSaved] = useState(false);
+  const [hasApiKey, setHasApiKey] = useState(false);
   
   // Reference, Builder & Logic Modal State
   const [showSODReference, setShowSODReference] = useState(false);
@@ -108,6 +109,27 @@ const App: React.FC = () => {
     };
     initData();
   }, []);
+
+  // Check for API Key (Paid Tier Support)
+  useEffect(() => {
+    const checkApiKey = async () => {
+      if (window.aistudio && window.aistudio.hasSelectedApiKey) {
+        const hasKey = await window.aistudio.hasSelectedApiKey();
+        setHasApiKey(hasKey);
+      }
+    };
+    checkApiKey();
+  }, []);
+
+  const handleSelectApiKey = async () => {
+    if (window.aistudio && window.aistudio.openSelectKey) {
+      await window.aistudio.openSelectKey();
+      const hasKey = await window.aistudio.hasSelectedApiKey();
+      setHasApiKey(hasKey);
+      // Reload to ensure the new key is picked up by the service
+      window.location.reload(); 
+    }
+  };
 
   // Automatic Save Timer (Every 30 seconds)
   useEffect(() => {
@@ -526,33 +548,6 @@ const App: React.FC = () => {
     reader.readAsText(file);
   };
 
-  const handleTranslateStudy = async () => {
-    if (!results) return;
-    
-    setIsLoading(true);
-    setError(null);
-    
-    try {
-      if (results) {
-        setHistory(prev => [...prev.slice(-29), results]);
-      }
-
-      // Always translate to English as requested
-      const targetLanguage = 'English';
-      
-      const translatedResults = await translateRCMAnalysis(results, targetLanguage);
-      
-      setResults(translatedResults);
-      setSelectedLanguage(targetLanguage);
-      
-    } catch (err: any) {
-      console.error("Translation failed", err);
-      setError("Translation failed. Please try again.");
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <WelcomeModal isOpen={showWelcome} onClose={handleCloseWelcome} />
@@ -616,13 +611,18 @@ const App: React.FC = () => {
               </div>
             </div>
             <div className="flex items-center gap-3">
+              <button 
+                onClick={handleSelectApiKey}
+                className={`flex items-center gap-2 px-3 py-2 rounded-xl text-[10px] font-black uppercase tracking-widest transition-colors ${!hasApiKey ? 'bg-amber-100 text-amber-700 hover:bg-amber-200 animate-pulse' : 'bg-slate-100 text-slate-500 hover:bg-slate-200'}`}
+              >
+                <Sparkles size={14} /> {!hasApiKey ? "Connect Paid Tier" : "Update API Key"}
+              </button>
               <div className="hidden lg:flex items-center gap-2 pr-3 mr-1">
                 <button onClick={() => setShowSODReference(true)} className="flex items-center gap-2 px-3 py-2 text-slate-500 hover:text-indigo-600 hover:bg-indigo-50 rounded-xl transition-all font-bold text-xs uppercase tracking-tight"><BookOpen size={16} />S/O/D Guide</button>
                 <button onClick={() => setShowDecisionLogic(true)} className="flex items-center gap-2 px-3 py-2 text-slate-500 hover:text-emerald-600 hover:bg-emerald-50 rounded-xl transition-all font-bold text-xs uppercase tracking-tight"><GitBranch size={16} />Logic Tree</button>
               </div>
               <div className="hidden sm:flex items-center text-[10px] font-black uppercase tracking-widest transition-opacity duration-300 mr-2">{justSaved ? (<span className="text-emerald-600 flex items-center gap-1.5 font-bold animate-pulse"><Check size={14} strokeWidth={3} /> Synced</span>) : (<span className="text-slate-300">{results ? 'Local draft' : ''}</span>)}</div>
               <div className="flex items-center gap-2">
-                <button onClick={handleTranslateStudy} disabled={isLoading || (!results && !contextText)} className={`p-2.5 rounded-xl transition-all ${(!results && !contextText) ? 'text-slate-200 cursor-not-allowed' : 'bg-slate-100 text-indigo-600 hover:bg-indigo-50 hover:text-indigo-700'}`} title={`Translate content to ${selectedLanguage}`}><Globe size={20} /></button>
                 <button onClick={handleUndo} disabled={history.length === 0} className={`p-2.5 rounded-xl transition-all ${history.length > 0 ? 'bg-slate-100 text-slate-700 hover:bg-slate-200 shadow-sm' : 'text-slate-200 cursor-not-allowed'}`} title="Undo last action"><Undo2 size={20} /></button>
                 <button onClick={() => handleSaveStudy(false)} disabled={!results && !contextText && filesData.length === 0} className={`flex items-center gap-3 px-6 py-2.5 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all shadow-xl ${justSaved ? 'bg-emerald-600 text-white border-emerald-600 shadow-emerald-200 scale-[1.02]' : 'bg-indigo-600 text-white hover:bg-indigo-700 active:scale-95 shadow-indigo-100 hover:shadow-indigo-200'} ${(!results && !contextText && filesData.length === 0) ? 'opacity-30 cursor-not-allowed' : ''}`}>
                    {justSaved ? <Check size={18} /> : <Save size={18} />}
