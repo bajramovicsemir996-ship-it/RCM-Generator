@@ -206,7 +206,7 @@ export const getApiKey = (): string | undefined => {
     }
 
     // 4. Hardcoded fallback (User provided key for publish mode)
-    return "AIzaSyDxpw2K9QkXJr3rvCCz8zVT6vwiyKqgeoc";
+    return "AIzaSyC9V4fBQlRGggRp0__WYP3y3LyBC-vpYvY";
 
   } catch (e) {
     console.warn("Error accessing API key", e);
