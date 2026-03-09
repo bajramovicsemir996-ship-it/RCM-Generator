@@ -101,6 +101,7 @@ declare global {
     aistudio?: {
       hasSelectedApiKey: () => Promise<boolean>;
       openSelectKey: () => Promise<void>;
+      getApiKey?: () => string | undefined; // Added getApiKey
     };
   }
 }

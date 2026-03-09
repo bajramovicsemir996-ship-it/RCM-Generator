@@ -110,24 +110,66 @@ const App: React.FC = () => {
     initData();
   }, []);
 
+  const [showApiKeyInput, setShowApiKeyInput] = useState(false);
+  const [manualApiKey, setManualApiKey] = useState('');
+
   // Check for API Key (Paid Tier Support)
   useEffect(() => {
+    let attempts = 0;
     const checkApiKey = async () => {
+      // Check for manually stored key first
+      const storedKey = localStorage.getItem('api_key');
+      if (storedKey) {
+        setHasApiKey(true);
+        return;
+      }
+
       if (window.aistudio && window.aistudio.hasSelectedApiKey) {
-        const hasKey = await window.aistudio.hasSelectedApiKey();
-        setHasApiKey(hasKey);
+        try {
+          const hasKey = await window.aistudio.hasSelectedApiKey();
+          if (hasKey) {
+            setHasApiKey(true);
+            return;
+          }
+        } catch (e) {
+          console.error("Failed to check API key", e);
+        }
+      }
+      
+      // Retry a few times if not found immediately (platform injection delay)
+      attempts++;
+      if (attempts < 5) {
+        setTimeout(checkApiKey, 1000);
       }
     };
+    
     checkApiKey();
   }, []);
 
   const handleSelectApiKey = async () => {
+    // Try platform dialog first
     if (window.aistudio && window.aistudio.openSelectKey) {
-      await window.aistudio.openSelectKey();
-      const hasKey = await window.aistudio.hasSelectedApiKey();
-      setHasApiKey(hasKey);
-      // Reload to ensure the new key is picked up by the service
-      window.location.reload(); 
+      try {
+        await window.aistudio.openSelectKey();
+        setHasApiKey(true);
+        setTimeout(() => window.location.reload(), 500);
+        return;
+      } catch (e) {
+        console.error("Failed to select key via platform", e);
+      }
+    }
+    
+    // Fallback to manual input if platform dialog fails or doesn't exist
+    setShowApiKeyInput(true);
+  };
+
+  const handleManualKeySubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (manualApiKey.trim()) {
+      localStorage.setItem('api_key', manualApiKey.trim());
+      setHasApiKey(true);
+      setShowApiKeyInput(false);
+      window.location.reload();
     }
   };
 
@@ -551,6 +593,44 @@ const App: React.FC = () => {
   return (
     <div className="flex h-screen bg-slate-50 overflow-hidden">
       <WelcomeModal isOpen={showWelcome} onClose={handleCloseWelcome} />
+      {showApiKeyInput && (
+        <div className="fixed inset-0 bg-black/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl shadow-2xl max-w-md w-full p-6 animate-in zoom-in-95">
+            <h3 className="text-lg font-bold text-slate-800 mb-2">Enter API Key Manually</h3>
+            <p className="text-sm text-slate-500 mb-4">
+              The automatic connection failed. Please paste your Paid Tier API key below.
+              <br/>
+              <a href="https://ai.google.dev/gemini-api/docs/billing" target="_blank" rel="noopener noreferrer" className="text-indigo-600 hover:underline font-medium mt-1 inline-block">Get a key from a paid Google Cloud project &rarr;</a>
+            </p>
+            <form onSubmit={handleManualKeySubmit}>
+              <input
+                type="password"
+                value={manualApiKey}
+                onChange={(e) => setManualApiKey(e.target.value)}
+                placeholder="AIzaSy..."
+                className="w-full px-4 py-2 border border-slate-200 rounded-xl mb-4 focus:outline-none focus:ring-2 focus:ring-indigo-500 font-mono text-sm"
+                autoFocus
+              />
+              <div className="flex justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setShowApiKeyInput(false)}
+                  className="px-4 py-2 text-slate-500 hover:bg-slate-100 rounded-xl font-medium text-sm transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={!manualApiKey.trim()}
+                  className="px-4 py-2 bg-indigo-600 text-white rounded-xl font-medium text-sm hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors shadow-sm shadow-indigo-200"
+                >
+                  Save Key
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
       <SODReference isOpen={showSODReference} onClose={() => setShowSODReference(false)} onUndo={handleUndo} canUndo={history.length > 0} />
       <OperationalContextBuilder 
         isOpen={showContextBuilder} 

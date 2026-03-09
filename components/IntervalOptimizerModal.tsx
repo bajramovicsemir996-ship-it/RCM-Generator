@@ -130,6 +130,8 @@ const FormattedChatMessage: React.FC<{ content: string; role: 'user' | 'assistan
   );
 };
 
+import { getApiKey } from '../services/geminiService';
+
 export const IntervalOptimizerModal: React.FC<IntervalOptimizerModalProps> = ({ item, isOpen, onClose, onApply }) => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
@@ -169,8 +171,9 @@ export const IntervalOptimizerModal: React.FC<IntervalOptimizerModalProps> = ({ 
     setIsLoading(true);
 
     try {
-      // Fix: Initialize GoogleGenAI strictly using process.env.API_KEY
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+      const apiKey = getApiKey();
+      if (!apiKey) throw new Error("API Key not found.");
+      const ai = new GoogleGenAI({ apiKey });
       
       const prompt = `
         FAILURE MODE CONTEXT:

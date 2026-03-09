@@ -167,13 +167,63 @@ const validationSchema = {
   }
 };
 
+export const getApiKey = (): string | undefined => {
+  try {
+    // Helper to validate key
+    const isValid = (k: any): boolean => {
+      return typeof k === 'string' && k.trim() !== '' && k !== 'undefined' && k !== 'null';
+    };
+
+    // 0. Manual Override (localStorage) - Highest priority for fallback
+    if (typeof localStorage !== 'undefined') {
+      const manualKey = localStorage.getItem('api_key');
+      if (isValid(manualKey)) return manualKey!.trim();
+    }
+
+    // 1. First priority: Check if a key was selected via the UI (window.aistudio)
+    // @ts-ignore
+    if (window.aistudio && window.aistudio.getApiKey) {
+       // @ts-ignore
+       const key = window.aistudio.getApiKey();
+       if (isValid(key)) return key.trim();
+    }
+
+    // 2. Second priority: Check process.env.GEMINI_API_KEY directly
+    try {
+      // @ts-ignore
+      const key = process.env.GEMINI_API_KEY;
+      if (isValid(key)) return key.trim();
+    } catch (e) {
+    }
+
+    // 3. Third priority: Check process.env.API_KEY directly (platform string replacement)
+    try {
+      // @ts-ignore
+      const key = process.env.API_KEY;
+      if (isValid(key)) return key.trim();
+    } catch (e) {
+      // Ignore ReferenceError if process is not defined and not replaced
+    }
+
+    // 4. Hardcoded fallback (User provided key for publish mode)
+    return "AIzaSyDxpw2K9QkXJr3rvCCz8zVT6vwiyKqgeoc";
+
+  } catch (e) {
+    console.warn("Error accessing API key", e);
+  }
+  return undefined;
+};
+
 export const generateRCMAnalysis = async (
   contextText: string,
   filesData: FileData[] | null,
   language: string = 'English',
   existingItems: RCMItem[] = []
 ): Promise<RCMItem[]> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please connect your Paid Tier account.");
+  
+  const ai = new GoogleGenAI({ apiKey });
   
   const fileParts = filesData ? filesData.map(file => ({
     inlineData: {
@@ -220,8 +270,7 @@ export const generateRCMAnalysis = async (
     config: {
       responseMimeType: "application/json",
       responseSchema: rcmSchema,
-      temperature: 0.2,
-      thinkingConfig: { thinkingBudget: 0 }
+      temperature: 0.2
     },
   });
 
@@ -236,7 +285,9 @@ export const generateRCMAnalysis = async (
 };
 
 export const extractOperationalContext = async (filesData: FileData[], language: string = 'English'): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please connect your Paid Tier account.");
+  const ai = new GoogleGenAI({ apiKey });
   
   const fileParts = filesData.map(file => ({
     inlineData: {
@@ -271,8 +322,7 @@ export const extractOperationalContext = async (filesData: FileData[], language:
       }
     ],
     config: {
-      temperature: 0.1,
-      thinkingConfig: { thinkingBudget: 0 }
+      temperature: 0.1
     },
   });
 
@@ -280,7 +330,9 @@ export const extractOperationalContext = async (filesData: FileData[], language:
 };
 
 export const generateInspectionSheet = async (item: RCMItem, language: string = 'English'): Promise<InspectionSheet> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please connect your Paid Tier account.");
+  const ai = new GoogleGenAI({ apiKey });
   
   const prompt = `
     Generate a highly technical field inspection sheet for the following failure mode:
@@ -307,7 +359,9 @@ export const generateInspectionSheet = async (item: RCMItem, language: string = 
 };
 
 export const generateComponentIntel = async (componentName: string, language: string = 'English'): Promise<ComponentIntel> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please connect your Paid Tier account.");
+  const ai = new GoogleGenAI({ apiKey });
   
   const prompt = `
     Provide engineering intelligence for the industrial component: "${componentName}".
@@ -329,7 +383,9 @@ export const generateComponentIntel = async (componentName: string, language: st
 };
 
 export const validateRCMAnalysis = async (items: RCMItem[], language: string = 'English'): Promise<{id: string, issues: string[]}[]> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please connect your Paid Tier account.");
+  const ai = new GoogleGenAI({ apiKey });
   
   const prompt = `
     Review the following RCM analysis for technical logical consistency and adherence to SAE JA1011 standards in ${language}.
@@ -353,7 +409,9 @@ export const validateRCMAnalysis = async (items: RCMItem[], language: string = '
 };
 
 export const translateRCMAnalysis = async (items: RCMItem[], targetLanguage: string): Promise<RCMItem[]> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please connect your Paid Tier account.");
+  const ai = new GoogleGenAI({ apiKey });
   
   // Batch processing to avoid token limits
   // Increased batch size to 20 for speed, Flash model has large context
@@ -431,7 +489,9 @@ export const translateRCMAnalysis = async (items: RCMItem[], targetLanguage: str
 };
 
 export const translateContext = async (text: string, targetLanguage: string): Promise<string> => {
-  const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+  const apiKey = getApiKey();
+  if (!apiKey) throw new Error("API Key not found. Please connect your Paid Tier account.");
+  const ai = new GoogleGenAI({ apiKey });
   
   const prompt = `
     Translate the following Operational Context technical description into ${targetLanguage}.
