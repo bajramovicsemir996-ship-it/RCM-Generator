@@ -63,8 +63,6 @@ const FormattedMessage: React.FC<{ text: string; role: 'user' | 'model'; isFacil
   );
 };
 
-import { getApiKey } from '../services/geminiService';
-
 export const AICopilot: React.FC<AICopilotProps> = ({ data, onUpdate, language }) => {
   const [isOpen, setIsOpen] = useState(false);
   const [input, setInput] = useState('');
@@ -146,9 +144,8 @@ export const AICopilot: React.FC<AICopilotProps> = ({ data, onUpdate, language }
     setIsLoading(true);
 
     try {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("API Key not found.");
-      const ai = new GoogleGenAI({ apiKey });
+      // Fix: Initialize GoogleGenAI strictly using process.env.API_KEY
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const studySummary = data.slice(-30).map(i => ({
         comp: i.component,
         fail: i.failureMode,
@@ -210,9 +207,8 @@ export const AICopilot: React.FC<AICopilotProps> = ({ data, onUpdate, language }
     setIsLoading(true);
 
     try {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("API Key not found.");
-      const ai = new GoogleGenAI({ apiKey });
+      // Fix: Initialize GoogleGenAI strictly using process.env.API_KEY
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const currentItems = (data || []).slice(-15).map(i => ({ c: i.component, fm: i.failureMode }));
       
       const prompt = `

@@ -18,8 +18,6 @@ interface Message {
   isDraft?: boolean;
 }
 
-import { getApiKey } from '../services/geminiService';
-
 export const OperationalContextBuilder: React.FC<OperationalContextBuilderProps> = ({ isOpen, onClose, onComplete, onUndo, canUndo, language }) => {
   const INITIAL_MESSAGE: Message = { 
     role: 'assistant', 
@@ -77,9 +75,8 @@ export const OperationalContextBuilder: React.FC<OperationalContextBuilderProps>
     setIsLoading(true);
 
     try {
-      const apiKey = getApiKey();
-      if (!apiKey) throw new Error("API Key not found.");
-      const ai = new GoogleGenAI({ apiKey });
+      // Fix: Initialize GoogleGenAI strictly using process.env.API_KEY
+      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       
       const history = messages.map(m => `${m.role === 'user' ? 'User' : 'Assistant'}: ${m.content}`).join('\n');
       

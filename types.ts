@@ -95,13 +95,3 @@ export interface SavedStudy {
   folderId?: string;
   isFinished?: boolean;
 }
-
-declare global {
-  interface Window {
-    aistudio?: {
-      hasSelectedApiKey: () => Promise<boolean>;
-      openSelectKey: () => Promise<void>;
-      getApiKey?: () => string | undefined; // Added getApiKey
-    };
-  }
-}
