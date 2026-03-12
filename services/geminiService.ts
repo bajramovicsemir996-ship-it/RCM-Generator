@@ -5,14 +5,24 @@ import { RCMItem, FileData, InspectionSheet, ComponentIntel } from "../types";
 export const getApiKey = (): string => {
   let key = "";
   
-  // Try to get the free tier key first
+  // 1. TENTA O PADRÃO NATIVO DO VITE (A solução para o Vite no Easypanel)
   try {
-    key = process.env.GEMINI_API_KEY as string;
+    // @ts-ignore - Ignora o erro do TS caso o import.meta.env não esteja tipado
+    key = import.meta.env.VITE_GEMINI_API_KEY || import.meta.env.VITE_API_KEY;
   } catch (e) {
     // Ignore
   }
+
+  // 2. Try to get the free tier key first
+  if (!key) {
+    try {
+      key = process.env.GEMINI_API_KEY as string;
+    } catch (e) {
+      // Ignore
+    }
+  }
   
-  // If not found, try the paid tier key
+  // 3. If not found, try the paid tier key
   if (!key) {
     try {
       key = process.env.API_KEY as string;
